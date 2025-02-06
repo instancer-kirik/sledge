@@ -1,14 +1,13 @@
-from PyQt6.QtCore import Qt, QPoint, QEvent, QSize, QTimer, QPointF, QUrl, QRect
+from PyQt6.QtCore import Qt, QPoint, QEvent, QRect, QSize, QTimer, QPointF, QUrl, QPropertyAnimation, QEasingCurve
 from PyQt6.QtWidgets import (
     QTabWidget, QWidget, QHBoxLayout, QVBoxLayout, 
-    QToolButton, QMenu, QLabel, QPushButton, QDockWidget, QDialog, QDialogButtonBox, QLineEdit, QColorDialog, QComboBox, QStackedWidget
+    QToolButton, QMenu, QLabel, QPushButton, QDockWidget, QDialog, QDialogButtonBox, QLineEdit, QColorDialog, QComboBox, QStackedWidget, QTabBar
 )
 from PyQt6.QtGui import QColor, QCursor, QIcon, QShortcut
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QApplication, QMainWindow
-from PyQt6.QtWidgets import QTabBar
-from PyQt6.QtCore import QPropertyAnimation
-from PyQt6.QtCore import QEasingCurve
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineCore import QWebEngineProfile
 
 from .states import TabState
 from .groups import TabGroup
@@ -1147,7 +1146,6 @@ class TabWidget(QTabWidget):
                     if group:
                         self._show_group_preview(current_index, group)
                         event.accept()
-                        return True
                     return False  # Let the page handle scrolling if no group
                 
                 elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):

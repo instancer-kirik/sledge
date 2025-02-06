@@ -1,8 +1,264 @@
-from PyQt6.QtWidgets import QSplitter,QDialog, QColorDialog,QDialogButtonBox, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QComboBox, QLabel, QTreeWidget, QTreeWidgetItem, QScrollArea, QFrame, QWidget, QGridLayout, QFileDialog, QMenu
+from PyQt6.QtWidgets import QSplitter,QDialog, QColorDialog,QDialogButtonBox, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QComboBox, QLabel, QTreeWidget, QTreeWidgetItem, QScrollArea, QFrame, QWidget, QGridLayout, QFileDialog, QMenu, QMainWindow
 from PyQt6.QtGui import QColor, QEventPoint
 from PyQt6.QtCore import Qt, QPoint, QPropertyAnimation, QSize, QEvent, QRect 
 import psutil
 from .states import TabState
+
+class PopoutWindow(QMainWindow):
+    def __init__(self, tab_widget, tab_index, parent=None):
+        super().__init__(parent)
+        self.tab_widget = tab_widget
+        self.tab_index = tab_index
+        self.init_ui()
+        
+    def init_ui(self):
+        # Get the tab content
+        tab = self.tab_widget.widget(self.tab_index)
+        title = self.tab_widget.tabText(self.tab_index)
+        self.setWindowTitle(f"Popout: {title}")
+        
+        # Create a toolbar with controls
+        toolbar = self.addToolBar("Controls")
+        
+        # Add always on top toggle
+        self.pin_action = toolbar.addAction("📌 Pin on Top")
+        self.pin_action.setCheckable(True)
+        self.pin_action.toggled.connect(self.toggle_always_on_top)
+        
+        # Add size presets
+        size_combo = QComboBox()
+        size_combo.addItems(["Custom", "360p", "480p", "720p", "1080p"])
+        size_combo.currentTextChanged.connect(self.change_size)
+        toolbar.addWidget(size_combo)
+        
+        # Add opacity control
+        opacity_label = QLabel("Opacity:")
+        toolbar.addWidget(opacity_label)
+        opacity_combo = QComboBox()
+        opacity_combo.addItems(["100%", "90%", "80%", "70%", "60%", "50%"])
+        opacity_combo.currentTextChanged.connect(self.change_opacity)
+        toolbar.addWidget(opacity_combo)
+        
+        # Add stream fix button
+        fix_btn = toolbar.addAction("🔄 Fix Stream")
+        fix_btn.triggered.connect(self.fix_stream)
+        
+        # Add debug button
+        debug_btn = toolbar.addAction("🔧 Debug")
+        debug_btn.triggered.connect(self.show_debug_info)
+        
+        # Add codec info button
+        codec_btn = toolbar.addAction("ℹ️ Codec Info")
+        codec_btn.triggered.connect(self.show_codec_info)
+        
+        # Set the tab as central widget
+        self.setCentralWidget(tab)
+        
+        # Set a reasonable default size
+        self.resize(480, 320)
+        
+        # Inject stream handlers
+        self.inject_stream_handlers()
+        
+    def inject_stream_handlers(self):
+        """Inject JavaScript to handle streams and fix common issues"""
+        if hasattr(self.centralWidget(), 'page'):
+            script = """
+            // Store original VideoJS error handler
+            if (window.videojs) {
+                const originalError = videojs.getComponent('ErrorDisplay');
+                
+                // Custom error handler for VideoJS
+                class CustomError extends originalError {
+                    constructor(player, options) {
+                        super(player, options);
+                        this.originalCreateEl = this.createEl;
+                        this.createEl = () => {
+                            const el = this.originalCreateEl();
+                            // Add retry button
+                            const retryBtn = document.createElement('button');
+                            retryBtn.textContent = '🔄 Retry';
+                            retryBtn.onclick = () => this.player_.load();
+                            el.appendChild(retryBtn);
+                            return el;
+                        };
+                    }
+                }
+                
+                // Register custom error handler
+                videojs.registerComponent('ErrorDisplay', CustomError);
+            }
+            
+            // WCO specific fixes
+            function fixWCOStream() {
+                const videos = document.getElementsByTagName('video');
+                for (const video of videos) {
+                    // Force HTML5 mode
+                    video.setAttribute('playsinline', '');
+                    video.setAttribute('webkit-playsinline', '');
+                    
+                    // Try to extract direct stream URL if available
+                    if (video.src && video.src.includes('wco')) {
+                        const possibleSources = Array.from(document.querySelectorAll('source'))
+                            .map(s => s.src)
+                            .filter(s => s && !s.includes('blob:'));
+                        
+                        if (possibleSources.length > 0) {
+                            video.src = possibleSources[0];
+                        }
+                    }
+                    
+                    // Add error recovery
+                    video.addEventListener('error', (e) => {
+                        if (e.target.error.code === 4) {
+                            // Try to reload with different source type
+                            const currentSrc = e.target.src;
+                            if (currentSrc) {
+                                // Try alternative format
+                                const newSrc = currentSrc.replace('.m3u8', '.mp4')
+                                    .replace('.mp4', '.m3u8');
+                                e.target.src = newSrc;
+                                e.target.load();
+                            }
+                        }
+                    });
+                }
+                
+                // Handle VideoJS player if present
+                if (window.videojs) {
+                    const players = document.getElementsByClassName('video-js');
+                    for (const player of players) {
+                        if (player.player) {
+                            // Force HTML5 tech
+                            player.player.options_.techOrder = ['html5'];
+                            // Add HLS support
+                            if (player.player.options_.sources) {
+                                player.player.src(player.player.options_.sources);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Run fixes
+            fixWCOStream();
+            // Watch for dynamic content
+            new MutationObserver(() => fixWCOStream())
+                .observe(document.body, {childList: true, subtree: true});
+            """
+            self.centralWidget().page().runJavaScript(script)
+        
+    def fix_stream(self):
+        """Manually trigger stream fixes"""
+        if hasattr(self.centralWidget(), 'page'):
+            self.centralWidget().page().runJavaScript("fixWCOStream();")
+            
+    def toggle_always_on_top(self, checked):
+        if checked:
+            self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        else:
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
+        self.show()  # Need to show again after changing flags
+        
+    def change_size(self, preset):
+        sizes = {
+            "360p": (640, 360),
+            "480p": (854, 480),
+            "720p": (1280, 720),
+            "1080p": (1920, 1080)
+        }
+        if preset in sizes:
+            self.resize(*sizes[preset])
+            
+    def change_opacity(self, value):
+        """Change window opacity"""
+        opacity = int(value.replace('%', '')) / 100.0
+        self.setWindowOpacity(opacity)
+            
+    def show_debug_info(self):
+        """Show video playback debug information"""
+        if hasattr(self.centralWidget(), 'page'):
+            script = """
+            const debugInfo = {
+                videos: Array.from(document.getElementsByTagName('video')).map(v => ({
+                    src: v.currentSrc,
+                    readyState: v.readyState,
+                    networkState: v.networkState,
+                    error: v.error ? {
+                        code: v.error.code,
+                        message: v.error.message
+                    } : null,
+                    played: v.played.length > 0,
+                    duration: v.duration,
+                    videoWidth: v.videoWidth,
+                    videoHeight: v.videoHeight,
+                    muted: v.muted,
+                    volume: v.volume
+                })),
+                player: window.videojs ? 
+                    Array.from(document.getElementsByClassName('video-js')).map(p => ({
+                        id: p.id,
+                        error: p.player ? p.player.error() : null,
+                        sources: p.player ? p.player.currentSources() : []
+                    })) : 'VideoJS not found'
+            };
+            debugInfo;
+            """
+            
+            def show_debug(result):
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Video Debug Info")
+                layout = QVBoxLayout(dialog)
+                
+                text = QLabel(f"Debug Information:\n\n{str(result)}")
+                text.setWordWrap(True)
+                layout.addWidget(text)
+                
+                copy_btn = QPushButton("Copy to Clipboard")
+                copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(str(result)))
+                layout.addWidget(copy_btn)
+                
+                dialog.exec()
+                
+            self.centralWidget().page().runJavaScript(script, show_debug)
+            
+    def show_codec_info(self):
+        """Show supported codec information"""
+        if hasattr(self.centralWidget(), 'page'):
+            script = """
+            const videoEl = document.createElement('video');
+            const codecInfo = {
+                webm: videoEl.canPlayType('video/webm; codecs="vp8, vorbis"'),
+                webmVP9: videoEl.canPlayType('video/webm; codecs="vp9"'),
+                mp4H264: videoEl.canPlayType('video/mp4; codecs="avc1.42E01E"'),
+                mp4H265: videoEl.canPlayType('video/mp4; codecs="hevc,mp4a.40.2"'),
+                ogg: videoEl.canPlayType('video/ogg; codecs="theora"'),
+                hls: videoEl.canPlayType('application/vnd.apple.mpegurl'),
+                dash: videoEl.canPlayType('application/dash+xml'),
+            };
+            codecInfo;
+            """
+            
+            def show_codec_info(result):
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Supported Codecs")
+                layout = QVBoxLayout(dialog)
+                
+                text = QLabel("Supported Video Formats:\n")
+                for codec, support in result.items():
+                    text.setText(text.text() + f"\n{codec}: {support or 'no'}")
+                layout.addWidget(text)
+                
+                dialog.exec()
+                
+            self.centralWidget().page().runJavaScript(script, show_codec_info)
+            
+    def closeEvent(self, event):
+        # Move the tab back to the main window
+        tab = self.centralWidget()
+        self.tab_widget.insertTab(self.tab_index, tab, self.windowTitle().replace("Popout: ", ""))
+        self.tab_widget.setCurrentIndex(self.tab_index)
+        super().closeEvent(event)
 
 class TabListDialog(QDialog):
     def __init__(self, tab_widget, parent=None):
@@ -201,10 +457,11 @@ class TabListDialog(QDialog):
         
         # Basic actions
         open_new = menu.addAction("Open in New Window")
+        popout = menu.addAction("Popout Player")  # Add popout option
         duplicate = menu.addAction("Duplicate")
         pin = menu.addAction("Pin Tab")
         
-        # Group submenu - Fixed reference
+        # Group submenu
         group_menu = menu.addMenu("Move to Group")
         for group_name in self.tab_widget.groups:
             group_menu.addAction(group_name)
@@ -216,8 +473,16 @@ class TabListDialog(QDialog):
         hibernate = menu.addAction("Hibernate Group")
         
         action = menu.exec(self.tab_list.mapToGlobal(position))
-        if action:
-            self.handle_context_action(action)
+        if action == popout:  # Handle popout action
+            selected_items = self.tab_list.selectedItems()
+            if selected_items:
+                tab_index = selected_items[0].data(0, Qt.ItemDataRole.UserRole)
+                self.popout_tab(tab_index)
+                
+    def popout_tab(self, tab_index):
+        """Create a popout window for the selected tab"""
+        popout = PopoutWindow(self.tab_widget, tab_index)
+        popout.show()
 
     def show_stats(self):
         """Show tab statistics"""
@@ -343,118 +608,51 @@ class TabSpreadDialog(QDialog):
     def __init__(self, tab_widget, parent=None):
         super().__init__(parent)
         self.tab_widget = tab_widget
-        self.setup_ui()
+        self.init_ui()
         
-    def setup_ui(self):
-        self.setWindowTitle("Tab Overview")
-        self.setWindowState(Qt.WindowState.WindowMaximized)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)  # Reduced margins for mobile
+    def init_ui(self):
+        self.setWindowTitle("Tab Spread")
+        layout = QGridLayout(self)
         
-        # Top bar with search and view mode
-        top_bar = QWidget()
-        top_bar.setStyleSheet("""
-            QWidget {
+        # Create tab preview widgets
+        for i in range(self.tab_widget.count()):
+            tab = self.tab_widget.widget(i)
+            preview = self.create_tab_preview(tab, i)
+            row = i // 3  # 3 columns
+            col = i % 3
+            layout.addWidget(preview, row, col)
+            
+        self.setStyleSheet("""
+            QDialog {
                 background: #2e3440;
-                border-radius: 15px;
-                padding: 5px;
             }
-        """)
-        top_layout = QHBoxLayout(top_bar)
-        top_layout.setSpacing(10)
-        
-        # Search bar with touch-friendly styling
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Search Tabs...")
-        self.search.setMinimumHeight(50)  # Taller for touch
-        self.search.setStyleSheet("""
-            QLineEdit {
-                font-size: 18px;
-                padding: 10px 20px;
-                border: none;
-                border-radius: 25px;
-                background: #3b4252;
+            QLabel {
                 color: #d8dee9;
             }
-            QLineEdit:focus {
-                background: #434c5e;
-            }
         """)
-        self.search.textChanged.connect(self.filter_tabs)
-        top_layout.addWidget(self.search, stretch=1)
+
+    def create_tab_preview(self, tab, index):
+        preview = QWidget()
+        preview_layout = QVBoxLayout(preview)
         
-        # View mode selector with touch-friendly styling
-        self.view_mode = QComboBox()
-        self.view_mode.addItems(["Cards", "List", "Groups"])
-        self.view_mode.setMinimumHeight(50)
-        self.view_mode.setMinimumWidth(120)
-        self.view_mode.setStyleSheet("""
-            QComboBox {
-                font-size: 18px;
-                padding: 10px 20px;
-                border: none;
-                border-radius: 25px;
-                background: #3b4252;
-                color: #d8dee9;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 30px;
-            }
-            QComboBox::down-arrow {
-                image: url(down_arrow.png);
-                width: 20px;
-                height: 20px;
-            }
-            QComboBox QAbstractItemView {
-                background: #2e3440;
-                border: none;
-                border-radius: 15px;
-                padding: 10px;
-                selection-background-color: #434c5e;
-            }
-        """)
-        self.view_mode.currentTextChanged.connect(self.change_view)
-        top_layout.addWidget(self.view_mode)
+        # Create clickable preview
+        preview_btn = QPushButton()
+        preview_btn.setFixedSize(300, 200)
+        preview_btn.clicked.connect(lambda: self.select_tab(index))
+        preview_layout.addWidget(preview_btn)
         
-        layout.addWidget(top_bar)
+        # Add tab title
+        title = QLabel(self.tab_widget.tabText(index))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_layout.addWidget(title)
         
-        # Scroll area for tab cards
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background: transparent;
-            }
-            QScrollBar:vertical {
-                width: 20px;
-                background: #2e3440;
-            }
-            QScrollBar::handle:vertical {
-                background: #4c566a;
-                min-height: 40px;
-                border-radius: 10px;
-                margin: 2px;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-        """)
+        return preview
         
-        # Container for tab cards
-        self.container = QWidget()
-        self.container.setStyleSheet("background: transparent;")
-        self.grid_layout = QGridLayout(self.container)
-        self.grid_layout.setSpacing(10)  # Reduced spacing for mobile
-        self.scroll.setWidget(self.container)
-        layout.addWidget(self.scroll)
-        
-        # Add swipe gesture recognition
-        self._setup_touch_gestures()
-        self.populate_spread()
-    
+    def select_tab(self, index):
+        """Handle tab selection"""
+        self.tab_widget.setCurrentIndex(index)
+        self.accept()  # Close dialog after selection
+
     def _setup_touch_gestures(self):
         """Setup touch gesture recognition"""
         self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
@@ -531,137 +729,6 @@ class TabSpreadDialog(QDialog):
             animation.finished.connect(lambda: self.tab_widget.removeTab(index))
             animation.start()
     
-    def create_tab_preview(self, tab, title, url, index):
-        """Create a touch-friendly tab preview card"""
-        preview = QFrame()
-        preview.setProperty("tab_index", index)  # Store index for gestures
-        preview.setFrameStyle(QFrame.Shape.StyledPanel)
-        preview.setMinimumSize(280, 200)  # Slightly smaller for mobile grid
-        preview.setStyleSheet("""
-            QFrame {
-                background: #3b4252;
-                border-radius: 15px;
-                border: none;
-            }
-            QFrame:active {
-                background: #434c5e;
-            }
-            QLabel {
-                color: #d8dee9;
-                font-size: 18px;  /* Increased base font size */
-            }
-        """)
-        
-        layout = QVBoxLayout(preview)
-        layout.setSpacing(8)
-        layout.setContentsMargins(12, 12, 12, 12)
-        
-        # Title bar with group indicator
-        title_bar = QHBoxLayout()
-        group = self.tab_widget.tab_groups.get(index)
-        if group:
-            # Skip empty URLs for group representatives
-            if hasattr(tab, 'url') and tab.url().toString():
-                group_label = QLabel(f"[{group}]")
-                group_label.setStyleSheet(f"""
-                    QLabel {{
-                        color: {self.tab_widget.groups[group].color.name()};
-                        font-weight: bold;
-                        font-size: 20px;  /* Increased group label size */
-                        padding: 6px 12px;
-                        background: rgba(0, 0, 0, 0.2);
-                        border-radius: 12px;
-                    }}
-                """)
-                title_bar.addWidget(group_label)
-        
-        title_label = QLabel(title)
-        title_label.setWordWrap(True)
-        title_label.setStyleSheet("font-size: 22px; font-weight: bold;")  # Increased title size
-        title_bar.addWidget(title_label)
-        layout.addLayout(title_bar)
-        
-        # Preview image (if available)
-        if hasattr(tab, 'grab'):
-            preview_label = QLabel()
-            pixmap = tab.grab().scaled(
-                260, 150, 
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            preview_label.setPixmap(pixmap)
-            preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(preview_label)
-        
-        # URL with ellipsis (only show if URL exists)
-        if hasattr(tab, 'url') and tab.url().toString():
-            url_label = QLabel(url)
-            url_label.setWordWrap(True)
-            url_label.setStyleSheet("color: #88c0d0; font-size: 16px;")  # Increased URL size
-            layout.addWidget(url_label)
-        
-        # Status indicators
-        status_layout = QHBoxLayout()
-        if hasattr(tab, 'page'):
-            # Add loading spinner or favicon
-            pass
-        
-        state = self.tab_widget.memory_manager.states.get(index)
-        if state == TabState.SNOOZED:
-            status = QLabel("💤 Snoozed")
-            status.setStyleSheet("""
-                QLabel {
-                    color: #88c0d0;
-                    padding: 8px 16px;
-                    background: rgba(136, 192, 208, 0.1);
-                    border-radius: 14px;
-                    font-size: 18px;  /* Increased status size */
-                }
-            """)
-            status_layout.addWidget(status)
-        
-        status_layout.addStretch()
-        layout.addLayout(status_layout)
-        
-        # Touch feedback
-        preview.mousePressEvent = lambda e: self._handle_card_press(preview)
-        preview.mouseReleaseEvent = lambda e: self._handle_card_release(preview, index)
-        
-        return preview
-    
-    def _handle_card_press(self, card):
-        """Handle card press with visual feedback"""
-        animation = QPropertyAnimation(card, b"geometry")
-        animation.setDuration(100)
-        start_geo = card.geometry()
-        # Scale down slightly
-        scaled_geo = QRect(
-            start_geo.x() + 5,
-            start_geo.y() + 5,
-            start_geo.width() - 10,
-            start_geo.height() - 10
-        )
-        animation.setStartValue(start_geo)
-        animation.setEndValue(scaled_geo)
-        animation.start()
-    
-    def _handle_card_release(self, card, index):
-        """Handle card release and activation"""
-        # Animate back to original size
-        animation = QPropertyAnimation(card, b"geometry")
-        animation.setDuration(100)
-        end_geo = card.geometry()
-        start_geo = QRect(
-            end_geo.x() + 5,
-            end_geo.y() + 5,
-            end_geo.width() - 10,
-            end_geo.height() - 10
-        )
-        animation.setStartValue(start_geo)
-        animation.setEndValue(end_geo)
-        animation.finished.connect(lambda: self.activate_tab(index))
-        animation.start()
-    
     def populate_spread(self, filter_text=""):
         """Populate the grid with tab cards"""
         # Clear existing items
@@ -685,7 +752,7 @@ class TabSpreadDialog(QDialog):
             url = tab.url().toString() if hasattr(tab, 'url') else ""
             
             if filter_text.lower() in title.lower() or filter_text.lower() in url.lower():
-                preview = self.create_tab_preview(tab, title, url, i)
+                preview = self.create_tab_preview(tab, i)
                 self.grid_layout.addWidget(preview, row, col)
                 
                 col += 1

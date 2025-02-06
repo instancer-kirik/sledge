@@ -9,13 +9,14 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import (
     QWebEnginePage, QWebEngineProfile, QWebEngineScript,
-    QWebEngineSettings
+    QWebEngineSettings, QWebEngineUrlRequestInterceptor
 )
 from PyQt6.QtGui import QAction, QIcon, QColor
 import json
 
 from .tabs.widgets import TabWidget
-from .ui.widgets import HTMLViewerWidget, BookmarkWidget, DownloadWidget, StyleAdjusterPanel
+from .ui.widgets import HTMLViewerWidget, BookmarkWidget, DownloadWidget
+from .ui.style_panel import StyleAdjusterPanel
 from .ui.styles import BrowserTheme, apply_dark_mode_js
 from .history import HistoryManager
 from .ui.dialogs import SettingsDialog
@@ -105,78 +106,224 @@ class SledgeBrowser(QMainWindow):
     def __init__(self):
         print("\n" + "="*50)
         print("🔍 [SLEDGE INIT] Starting SledgeBrowser initialization...")
-        super().__init__()
-        self.settings = Settings()
-        print("🔍 [SLEDGE INIT] Created Settings")
-        self.history_manager = HistoryManager()
-        print("🔍 [SLEDGE INIT] Created HistoryManager")
-        self.dev_tools_windows = {}
-        self.page_profiles = {}
-        self.tab_search_active = False
-        self.theme = BrowserTheme()
-        print("🔍 [SLEDGE INIT] Created BrowserTheme")
-        self.extension_manager = ExtensionManager(self)
-        print("🔍 [SLEDGE INIT] Created ExtensionManager")
-        self.profile = self.setup_profile()
-        print("🔍 [SLEDGE INIT] Setup Profile")
-        self.loading_tabs = set()
-        self.workspaces = {}
-        self.current_workspace = None
-        print("🔍 [SLEDGE INIT] About to initUI")
-        self.initUI()
-        print("🔍 [SLEDGE INIT] Finished initUI")
-        self.setup_dev_tools()
-        print("🔍 [SLEDGE INIT] Setup DevTools")
-        self.setup_workspaces()
-        print("🔍 [SLEDGE INIT] Setup Workspaces")
-        self.setup_workspace_toolbar()
-        print("🔍 [SLEDGE INIT] Setup Workspace Toolbar")
-        print("🔍 [SLEDGE INIT] Initialization Complete!")
-        print("="*50 + "\n")
+        
+        try:
+            super().__init__()
+            
+            # Initialize settings first
+            self.settings = Settings()
+            self.settings.load_defaults()
+            
+            # Initialize codec support
+            self._initialize_codec_support()
+            
+            # Initialize core components with error handling
+            self.force_dark = True   # Dark mode setting
+            self.font_size = 12      # Default font size
+            self.line_height = 1.5   # Default line height multiplier
+            self.max_width = 1200    # Default maximum width for content
+            self.hide_images = False # Whether to hide images by default
+            self.hide_ads = True     # Whether to hide ads by default
+            self.justify_text = True # Whether to justify text by default
+            self.use_dyslexic_font = False  # Whether to use OpenDyslexic font
+            
+            # Set up the browser profile first
+            try:
+                self.profile = self.setup_profile()
+                print("🔍 [SLEDGE INIT] Created Browser Profile")
+            except Exception as e:
+                print("Error setting up Profile:", e)
+                raise
+                
+            try:
+                self.history_manager = HistoryManager(self)
+                print("🔍 [SLEDGE INIT] Created HistoryManager")
+            except Exception as e:
+                print("Error initializing HistoryManager:", e)
+                raise
+                
+            self.dev_tools_windows = {}
+            self.page_profiles = {}
+            self.tab_search_active = False
+            
+            try:
+                self.theme = BrowserTheme()
+                print("🔍 [SLEDGE INIT] Created BrowserTheme")
+            except Exception as e:
+                print("Error initializing BrowserTheme:", e)
+                raise
+                
+            try:
+                self.extension_manager = ExtensionManager(self)
+                print("🔍 [SLEDGE INIT] Created ExtensionManager")
+            except Exception as e:
+                print("Error initializing ExtensionManager:", e)
+                raise
+                
+            self.loading_tabs = set()
+            self.workspaces = {}
+            self.current_workspace = None
+            
+            try:
+                print("🔍 [SLEDGE INIT] About to initUI")
+                self.initUI()
+                print("🔍 [SLEDGE INIT] Finished initUI")
+            except Exception as e:
+                print("Error initializing UI:", e)
+                raise
+                
+            try:
+                self.setup_dev_tools()
+                print("🔍 [SLEDGE INIT] Setup DevTools")
+            except Exception as e:
+                print("Error setting up DevTools:", e)
+                raise
+                
+            try:
+                self.setup_workspaces()
+                print("🔍 [SLEDGE INIT] Setup Workspaces")
+            except Exception as e:
+                print("Error setting up Workspaces:", e)
+                raise
+                
+            try:
+                self.setup_workspace_toolbar()
+                print("🔍 [SLEDGE INIT] Setup Workspace Toolbar")
+            except Exception as e:
+                print("Error setting up Workspace Toolbar:", e)
+                raise
+                
+            print("🔍 [SLEDGE INIT] Initialization Complete!")
+            print("="*50 + "\n")
+            
+        except Exception as e:
+            print("Fatal error during SledgeBrowser initialization:", e)
+            raise
+
+    def _initialize_codec_support(self):
+        """Initialize video codec support"""
+        # Set up Chromium flags for video support
+        codec_flags = [
+            "--use-gl=desktop",
+            "--ignore-gpu-blocklist",
+            "--enable-gpu-rasterization",
+            "--enable-zero-copy",
+            "--disable-gpu-driver-bug-workarounds",
+            "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder",
+            "--enable-accelerated-video-decode",
+            "--enable-accelerated-mjpeg-decode",
+            "--enable-features=UseOzonePlatform",
+            "--disable-features=UseChromeOSDirectVideoDecoder",
+            "--enable-native-gpu-memory-buffers",
+            "--autoplay-policy=no-user-gesture-required",
+            "--disable-web-security",
+            "--allow-running-insecure-content",
+            "--ignore-certificate-errors"
+        ]
+        
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(codec_flags)
+        print("🎥 [CODEC] Set Chromium flags:", os.environ["QTWEBENGINE_CHROMIUM_FLAGS"])
 
     def setup_profile(self):
-        """Set up browser profile with enhanced security defaults"""
+        """Set up the browser profile with video support"""
         profile = QWebEngineProfile.defaultProfile()
         
-        # Set modern user agent without problematic headers
-        modern_agent = (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
-        profile.setHttpUserAgent(modern_agent)
+        # Configure profile settings
+        profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies)
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
+        profile.setPersistentStoragePath("./cache")
+        profile.setCachePath("./cache")
         
-        # Configure security settings
+        # Configure web settings
         settings = profile.settings()
-        
-        # Enable modern security features
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.ShowScrollBars, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.DnsPrefetchEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.XSSAuditingEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.NavigateOnDropEnabled, False)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, False)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowGeolocationOnInsecureOrigins, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AutoLoadImages, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebRTCPublicInterfacesOnly, False)
+        
+        # Add request interceptor
+        interceptor = self.create_request_interceptor()
+        profile.setUrlRequestInterceptor(interceptor)
+        
+        print("🔧 [PROFILE] Browser profile configured with video support")
+        return profile
 
-        # Privacy settings
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled,
-                            not self.settings.get('privacy', 'clear_on_exit'))
+    def inject_media_error_handler(self, profile):
+        """Inject JavaScript to handle media errors"""
+        js = """
+        (function() {
+            // Override video error handling
+            HTMLMediaElement.prototype._play = HTMLMediaElement.prototype.play;
+            HTMLMediaElement.prototype.play = function() {
+                var video = this;
+                return video._play().catch(function(error) {
+                    console.error('Video playback error:', error);
+                    // Try to recover from error
+                    if (error.name === 'NotSupportedError') {
+                        // Try alternative video source or format
+                        if (video.src && !video.src.includes('&type=video')) {
+                            video.src = video.src + '&type=video';
+                            return video._play();
+                        }
+                    }
+                    throw error;
+                });
+            };
+            
+            // Add video error listener
+            document.addEventListener('error', function(e) {
+                if (e.target.tagName === 'VIDEO') {
+                    console.error('Video error:', e);
+                    // Try to recover
+                    if (e.target.error.code === 4) {
+                        console.log('Attempting to recover from MEDIA_ERR_SRC_NOT_SUPPORTED');
+                        // Try alternative source
+                        if (e.target.src && !e.target.src.includes('&type=video')) {
+                            e.target.src = e.target.src + '&type=video';
+                            e.target.load();
+                            e.target.play();
+                        }
+                    }
+                }
+            }, true);
+        })();
+        """
         
-        # Enhanced cookie settings
-        profile.setPersistentCookiesPolicy(
-            QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
-            if not self.settings.get('privacy', 'clear_on_exit')
-            else QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies
-        )
+        # Inject the script into all pages
+        profile.scripts().insert(QWebEngineScript(
+            name="media_error_handler",
+            sourceCode=js,
+            injectionPoint=QWebEngineScript.InjectionPoint.DocumentCreation,
+            worldId=QWebEngineScript.ScriptWorldId.MainWorld
+        ))
+        print("📺 [VIDEO] Injected media error handler")
+
+    def create_web_profile(self, browser):
+        """Create a web profile for a browser tab"""
+        profile = QWebEngineProfile(self)
         
-        # Set up request interceptor with enhanced security
-        self.request_interceptor = self.create_request_interceptor()
-        profile.setUrlRequestInterceptor(self.request_interceptor)
+        # Enable media playback support for this profile
+        settings = profile.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
         
-        # Inject security and dark mode scripts
-        self.inject_security_scripts(profile)
-        self.inject_dark_mode_script(profile)
+        # Set up request interceptor
+        interceptor = self.create_request_interceptor()
+        profile.setUrlRequestInterceptor(interceptor)
+        
+        # Inject error handling script
+        self.inject_media_error_handler(profile)
         
         return profile
 
@@ -463,10 +610,10 @@ class SledgeBrowser(QMainWindow):
 
         # Load extensions
         self.extension_manager.load_extensions()
-
+        
         # Add initial tab
         self.add_new_tab()
-
+        
         # Add Settings button
         settings_btn = QAction(self.get_icon('settings'), 'Settings', self)
         settings_btn.triggered.connect(self.show_settings)
@@ -742,18 +889,7 @@ class SledgeBrowser(QMainWindow):
             icon = web_view.icon()
             if not icon.isNull():
                 self.tabs.setTabIcon(index, icon)
-
-    def create_web_profile(self, browser):
-        """Create a web profile with privacy settings"""
-        profile = QWebEngineProfile(browser)
-        profile.setHttpUserAgent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        )
-        profile.setHttpAcceptLanguage("en-US,en;q=0.9")
-        profile.setHttpUserAgent(profile.httpUserAgent() + 
-                               " Permissions-Policy: interest-cohort=()")
-        return profile
-
+                
     def show_settings(self):
         """Show settings dialog"""
         dialog = QDialog(self)
@@ -1043,7 +1179,7 @@ class SledgeBrowser(QMainWindow):
             del tab.page_ref
             
         self.tabs.removeTab(index)
-
+                
     def current_tab(self):
         """Get current tab widget"""
         return self.tabs.currentWidget()
@@ -1791,11 +1927,10 @@ class SecurityPanel(QWidget):
         mode_layout = QVBoxLayout()
         
         # Dev Mode Toggle
-        self.dev_mode = QCheckBox("Developer Mode (Relaxed Security)")
+        self.dev_mode = QCheckBox("Developer Mode")
         self.dev_mode.setChecked(self.settings.get('security', 'dev_mode'))
         self.dev_mode.stateChanged.connect(
-            lambda state: self.settings.set('security', 'dev_mode', bool(state))
-        )
+            lambda state: self.settings.set('security', 'dev_mode', bool(state)))
         mode_layout.addWidget(self.dev_mode)
         
         # Warning Label
@@ -1817,32 +1952,28 @@ class SecurityPanel(QWidget):
         self.strict_cors = QCheckBox("Strict CORS Policy")
         self.strict_cors.setChecked(self.settings.get('security', 'strict_cors'))
         self.strict_cors.stateChanged.connect(
-            lambda state: self.settings.set('security', 'strict_cors', bool(state))
-        )
+            lambda state: self.settings.set('security', 'strict_cors', bool(state)))
         features_layout.addWidget(self.strict_cors)
         
         # Mixed Content
         self.block_mixed = QCheckBox("Block Mixed Content")
         self.block_mixed.setChecked(self.settings.get('security', 'block_mixed_content'))
         self.block_mixed.stateChanged.connect(
-            lambda state: self.settings.set('security', 'block_mixed_content', bool(state))
-        )
+            lambda state: self.settings.set('security', 'block_mixed_content', bool(state)))
         features_layout.addWidget(self.block_mixed)
         
         # Dangerous Ports
         self.block_ports = QCheckBox("Block Dangerous Ports")
         self.block_ports.setChecked(self.settings.get('security', 'block_dangerous_ports'))
         self.block_ports.stateChanged.connect(
-            lambda state: self.settings.set('security', 'block_dangerous_ports', bool(state))
-        )
+            lambda state: self.settings.set('security', 'block_dangerous_ports', bool(state)))
         features_layout.addWidget(self.block_ports)
         
         # Dangerous Schemes
         self.block_schemes = QCheckBox("Block Dangerous URL Schemes")
         self.block_schemes.setChecked(self.settings.get('security', 'block_dangerous_schemes'))
         self.block_schemes.stateChanged.connect(
-            lambda state: self.settings.set('security', 'block_dangerous_schemes', bool(state))
-        )
+            lambda state: self.settings.set('security', 'block_dangerous_schemes', bool(state)))
         features_layout.addWidget(self.block_schemes)
         
         features_group.setLayout(features_layout)
@@ -1866,7 +1997,8 @@ class SecurityPanel(QWidget):
             self.status_label.setText("🔒 Normal Security Mode - Full Protection Active")
             self.status_label.setStyleSheet("color: #a3be8c;")  # Green for secure
 
-def main():
+def main(argv=None):
+    """Main entry point for the browser"""
     # Redirect web-related output to a log file
     import os
     import sys
@@ -1877,14 +2009,35 @@ def main():
     
     print("\n" + "="*50)
     print("🚀 [SLEDGE DEBUG] 1. Entering main()")
-    app = QApplication(sys.argv)
-    print("🚀 [SLEDGE DEBUG] 2. Created QApplication")
-    browser = SledgeBrowser()
-    print("🚀 [SLEDGE DEBUG] 3. Created SledgeBrowser")
-    browser.show()
-    print("🚀 [SLEDGE DEBUG] 4. Called browser.show()")
-    print("="*50 + "\n")
-    sys.exit(app.exec())
+    
+    try:
+        # Initialize Qt Application
+        app = QApplication(argv if argv is not None else [])
+        print("🚀 [SLEDGE DEBUG] 2. Created QApplication")
+        
+        # Initialize QtWebEngine
+        try:
+            from PyQt6.QtWebEngineCore import QWebEngineProfile
+            print("🚀 [SLEDGE DEBUG] 3. QtWebEngine initialized")
+        except ImportError as e:
+            print("Error: QtWebEngine not available:", e)
+            return 1
+            
+        # Create and show browser
+        try:
+            browser = SledgeBrowser()
+            print("🚀 [SLEDGE DEBUG] 4. Created SledgeBrowser")
+            browser.show()
+            print("🚀 [SLEDGE DEBUG] 5. Called browser.show()")
+            print("="*50 + "\n")
+            return app.exec()
+        except Exception as e:
+            print("Error initializing browser:", e)
+            return 1
+            
+    except Exception as e:
+        print("Fatal error:", e)
+        return 1
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

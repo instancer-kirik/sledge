@@ -395,332 +395,166 @@ class LinkStorageWidget(QWidget):
                 )
 
 class StyleAdjusterPanel(QWidget):
-    """Panel for quick style adjustments"""
-    style_changed = pyqtSignal(str)  # Emits the new style mode
+    """Panel for adjusting browser theme and style settings"""
     
-    def __init__(self, parent=None):
+    def __init__(self, theme, parent=None):
         super().__init__(parent)
+        self.theme = theme
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(8)
         self.layout.setContentsMargins(10, 10, 10, 10)
         
-        # Style mode buttons
-        self.mode_group = QButtonGroup(self)
-        self.mode_group.setExclusive(True)
+        # Theme selection
+        theme_group = QGroupBox("Theme")
+        theme_layout = QVBoxLayout(theme_group)
         
-        modes_layout = QHBoxLayout()
+        self.theme_buttons = {}
+        for theme_name in ['dark', 'light', 'sepia', 'nord', 'solarized']:
+            btn = QPushButton(theme_name.title())
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, tn=theme_name: self._change_theme(tn))
+            theme_layout.addWidget(btn)
+            self.theme_buttons[theme_name] = btn
+            
+        # Set initial theme button state
+        current_theme = 'dark' if self.theme.force_dark else self.theme.current_theme
+        if current_theme in self.theme_buttons:
+            self.theme_buttons[current_theme].setChecked(True)
+            
+        self.layout.addWidget(theme_group)
         
-        # Dark mode button
-        self.dark_btn = QPushButton("🌙 Dark")
-        self.dark_btn.setCheckable(True)
-        self.dark_btn.setStyleSheet("""
-            QPushButton {
-                padding: 8px 16px;
-                border-radius: 15px;
-                background: #2e3440;
-                color: #d8dee9;
-            }
-            QPushButton:checked {
-                background: #3b4252;
-                border: 2px solid #88c0d0;
-            }
-        """)
-        self.mode_group.addButton(self.dark_btn)
-        modes_layout.addWidget(self.dark_btn)
+        # Force dark mode toggle
+        self.force_dark = QCheckBox("Force Dark Mode")
+        self.force_dark.setChecked(self.theme.force_dark)
+        self.force_dark.toggled.connect(self._toggle_force_dark)
+        self.layout.addWidget(self.force_dark)
         
-        # Light mode button
-        self.light_btn = QPushButton("☀️ Light")
-        self.light_btn.setCheckable(True)
-        self.light_btn.setStyleSheet("""
-            QPushButton {
-                padding: 8px 16px;
-                border-radius: 15px;
-                background: #eceff4;
-                color: #2e3440;
-            }
-            QPushButton:checked {
-                background: #e5e9f0;
-                border: 2px solid #5e81ac;
-            }
-        """)
-        self.mode_group.addButton(self.light_btn)
-        modes_layout.addWidget(self.light_btn)
+        # Style adjustments
+        adjust_group = QGroupBox("Style Adjustments")
+        adjust_layout = QVBoxLayout(adjust_group)
         
-        # Readable mode button
-        self.readable_btn = QPushButton("📖 Readable")
-        self.readable_btn.setCheckable(True)
-        self.readable_btn.setStyleSheet("""
-            QPushButton {
-                padding: 8px 16px;
-                border-radius: 15px;
-                background: #d8dee9;
-                color: #2e3440;
-            }
-            QPushButton:checked {
-                background: #e5e9f0;
-                border: 2px solid #5e81ac;
-            }
-        """)
-        self.mode_group.addButton(self.readable_btn)
-        modes_layout.addWidget(self.readable_btn)
-        
-        # High contrast mode button
-        self.contrast_btn = QPushButton("🔍 High Contrast")
-        self.contrast_btn.setCheckable(True)
-        self.contrast_btn.setStyleSheet("""
-            QPushButton {
-                padding: 8px 16px;
-                border-radius: 15px;
-                background: #000000;
-                color: #ffffff;
-            }
-            QPushButton:checked {
-                background: #000000;
-                border: 2px solid #ffff00;
-            }
-        """)
-        self.mode_group.addButton(self.contrast_btn)
-        modes_layout.addWidget(self.contrast_btn)
-        
-        self.layout.addLayout(modes_layout)
-        
-        # Quick adjustments
-        adjustments_group = QGroupBox("Quick Adjustments")
-        adjustments_layout = QVBoxLayout(adjustments_group)
-        
-        # Font size slider
+        # Font size
         font_layout = QHBoxLayout()
         font_layout.addWidget(QLabel("Font Size:"))
         self.font_slider = QSlider(Qt.Orientation.Horizontal)
         self.font_slider.setMinimum(12)
         self.font_slider.setMaximum(24)
-        self.font_slider.setValue(18)
-        self.font_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.font_slider.setTickInterval(2)
+        self.font_slider.setValue(self.theme.font_size)
+        self.font_slider.valueChanged.connect(self._update_font_size)
         font_layout.addWidget(self.font_slider)
-        self.font_size_label = QLabel("18px")
-        font_layout.addWidget(self.font_size_label)
-        adjustments_layout.addLayout(font_layout)
+        self.font_label = QLabel(f"{self.theme.font_size}px")
+        font_layout.addWidget(self.font_label)
+        adjust_layout.addLayout(font_layout)
         
-        # Line height slider
+        # Line height
         line_layout = QHBoxLayout()
         line_layout.addWidget(QLabel("Line Height:"))
         self.line_slider = QSlider(Qt.Orientation.Horizontal)
         self.line_slider.setMinimum(10)
         self.line_slider.setMaximum(20)
-        self.line_slider.setValue(15)
-        self.line_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.line_slider.setTickInterval(2)
+        self.line_slider.setValue(int(self.theme.line_height * 10))
+        self.line_slider.valueChanged.connect(self._update_line_height)
         line_layout.addWidget(self.line_slider)
-        self.line_height_label = QLabel("1.5")
-        line_layout.addWidget(self.line_height_label)
-        adjustments_layout.addLayout(line_layout)
+        self.line_label = QLabel(f"{self.theme.line_height:.1f}")
+        line_layout.addWidget(self.line_label)
+        adjust_layout.addLayout(line_layout)
         
-        # Width limit slider
+        # Max width
         width_layout = QHBoxLayout()
         width_layout.addWidget(QLabel("Max Width:"))
         self.width_slider = QSlider(Qt.Orientation.Horizontal)
         self.width_slider.setMinimum(400)
         self.width_slider.setMaximum(1200)
-        self.width_slider.setValue(800)
-        self.width_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.width_slider.setTickInterval(200)
+        self.width_slider.setValue(self.theme.max_width)
+        self.width_slider.valueChanged.connect(self._update_max_width)
         width_layout.addWidget(self.width_slider)
-        self.width_label = QLabel("800px")
+        self.width_label = QLabel(f"{self.theme.max_width}px")
         width_layout.addWidget(self.width_label)
-        adjustments_layout.addLayout(width_layout)
+        adjust_layout.addLayout(width_layout)
         
-        self.layout.addWidget(adjustments_group)
+        self.layout.addWidget(adjust_group)
         
         # Additional options
         options_group = QGroupBox("Options")
         options_layout = QVBoxLayout(options_group)
         
         self.hide_images = QCheckBox("Hide Images")
+        self.hide_images.setChecked(self.theme.hide_images)
+        self.hide_images.toggled.connect(self._update_options)
         options_layout.addWidget(self.hide_images)
         
         self.hide_ads = QCheckBox("Hide Ads")
-        self.hide_ads.setChecked(True)
+        self.hide_ads.setChecked(self.theme.hide_ads)
+        self.hide_ads.toggled.connect(self._update_options)
         options_layout.addWidget(self.hide_ads)
         
         self.justify_text = QCheckBox("Justify Text")
+        self.justify_text.setChecked(self.theme.justify_text)
+        self.justify_text.toggled.connect(self._update_options)
         options_layout.addWidget(self.justify_text)
         
-        self.dyslexic_font = QCheckBox("Dyslexic-friendly Font")
-        options_layout.addWidget(self.dyslexic_font)
+        self.use_dyslexic_font = QCheckBox("Use Dyslexic Font")
+        self.use_dyslexic_font.setChecked(self.theme.use_dyslexic_font)
+        self.use_dyslexic_font.toggled.connect(self._update_options)
+        options_layout.addWidget(self.use_dyslexic_font)
         
         self.layout.addWidget(options_group)
         
-        # Connect signals
-        self.mode_group.buttonClicked.connect(self._handle_mode_change)
-        self.font_slider.valueChanged.connect(self._update_font_size)
-        self.line_slider.valueChanged.connect(self._update_line_height)
-        self.width_slider.valueChanged.connect(self._update_width)
-        self.hide_images.toggled.connect(self._update_style)
-        self.hide_ads.toggled.connect(self._update_style)
-        self.justify_text.toggled.connect(self._update_style)
-        self.dyslexic_font.toggled.connect(self._update_style)
+        # Add stretch at the end
+        self.layout.addStretch()
         
-        # Set initial mode
-        self.dark_btn.setChecked(True)
-        
-    def _handle_mode_change(self, button):
-        """Handle mode button clicks"""
-        mode_map = {
-            self.dark_btn: 'dark',
-            self.light_btn: 'light',
-            self.readable_btn: 'readable',
-            self.contrast_btn: 'high_contrast'
-        }
-        self.style_changed.emit(mode_map[button])
-        self._update_style()
-    
+    def _change_theme(self, theme_name):
+        """Change the current theme"""
+        self.theme.set_theme(theme_name)
+        # Update UI to reflect changes
+        if hasattr(self.parent(), 'update_theme'):
+            self.parent().update_theme()
+            
+    def _toggle_force_dark(self, checked):
+        """Toggle force dark mode"""
+        self.theme.toggle_force_dark(checked)
+        # Update theme buttons state
+        current_theme = 'dark' if checked else self.theme.current_theme
+        for name, btn in self.theme_buttons.items():
+            btn.setChecked(name == current_theme)
+        # Update UI
+        if hasattr(self.parent(), 'update_theme'):
+            self.parent().update_theme()
+            
     def _update_font_size(self, value):
-        """Update font size label and style"""
-        self.font_size_label.setText(f"{value}px")
-        self._update_style()
-    
+        """Update font size setting"""
+        self.font_label.setText(f"{value}px")
+        self.theme.update_style_settings(font_size=value)
+        self._refresh_page()
+        
     def _update_line_height(self, value):
-        """Update line height label and style"""
+        """Update line height setting"""
         height = value / 10
-        self.line_height_label.setText(f"{height:.1f}")
-        self._update_style()
-    
-    def _update_width(self, value):
-        """Update width label and style"""
+        self.line_label.setText(f"{height:.1f}")
+        self.theme.update_style_settings(line_height=height)
+        self._refresh_page()
+        
+    def _update_max_width(self, value):
+        """Update max width setting"""
         self.width_label.setText(f"{value}px")
-        self._update_style()
-    
-    def _update_style(self):
-        """Update the page style based on current settings"""
-        if not hasattr(self.parent(), 'current_tab'):
-            return
-            
-        page = self.parent().current_tab().page()
-        if not page:
-            return
-            
-        # Build custom CSS based on settings with stronger overrides
-        custom_css = f"""
-            /* Force override for all elements */
-            html, body, div, span, applet, object, iframe, h1, h2, h3, h4, h5, h6, p,
-            blockquote, pre, a, abbr, acronym, address, big, cite, code, del, dfn,
-            em, img, ins, kbd, q, s, samp, small, strike, strong, sub, sup, tt, var,
-            b, u, i, center, dl, dt, dd, ol, ul, li, fieldset, form, label, legend,
-            table, caption, tbody, tfoot, thead, tr, th, td, article, aside, canvas,
-            details, embed, figure, figcaption, footer, header, hgroup, menu, nav,
-            output, ruby, section, summary, time, mark, audio, video {{
-                font-size: {self.font_slider.value()}px !important;
-                line-height: {self.line_slider.value() / 10} !important;
-                {f"text-align: justify !important;" if self.justify_text.isChecked() else ""}
-                {f"font-family: 'OpenDyslexic', sans-serif !important;" if self.dyslexic_font.isChecked() else ""}
-            }}
-            
-            /* Force max width on content containers */
-            body > *, div[role="main"], .container, main, article, section {{
-                max-width: {self.width_slider.value()}px !important;
-                margin-left: auto !important;
-                margin-right: auto !important;
-                box-sizing: border-box !important;
-                padding-left: 20px !important;
-                padding-right: 20px !important;
-            }}
-            
-            /* Handle images */
-            {f"img, svg, canvas, video {{ display: none !important; }}" if self.hide_images.isChecked() else ""}
-            
-            /* Handle ads */
-            {f"""
-            [class*="ad-"], [class*="advertisement"], [id*="ad-"],
-            [class*="sponsor"], [id*="sponsor"],
-            iframe[src*="ad"], iframe[id*="ad"], 
-            div[class*="ad"], div[id*="ad"],
-            [data-ad], [data-advertisement],
-            .adsbygoogle, .ad-container, .advertisement,
-            div[aria-label*="Advertisement"],
-            aside[role="complementary"] {{
-                display: none !important;
-                visibility: hidden !important;
-                opacity: 0 !important;
-                width: 0 !important;
-                height: 0 !important;
-                position: absolute !important;
-                pointer-events: none !important;
-            }}""" if self.hide_ads.isChecked() else ""}
-            
-            /* Force color scheme based on mode */
-            @media (prefers-color-scheme: dark) {{
-                :root {{
-                    color-scheme: dark !important;
-                }}
-            }}
-            
-            /* Override specific problematic sites */
-            /* HackerNews specific overrides */
-            body.news {{
-                background-color: {self.dark_btn.isChecked() and "#1a1a1a" or "#ffffff"} !important;
-                color: {self.dark_btn.isChecked() and "#e0e0e0" or "#000000"} !important;
-            }}
-            
-            .title, .storylink, .subtext, .comment, .commtext, .hnname,
-            .pagetop, .comment-tree .comment, .comhead {{
-                color: {self.dark_btn.isChecked() and "#e0e0e0" or "#000000"} !important;
-            }}
-            
-            a {{
-                color: {self.dark_btn.isChecked() and "#88c0d0" or "#0066cc"} !important;
-            }}
-            
-            /* Force text contrast */
-            * {{
-                text-shadow: none !important;
-                -webkit-text-stroke: unset !important;
-            }}
-            
-            /* Ensure readability */
-            p, li, td, th, blockquote, code, pre {{
-                font-size: {self.font_slider.value()}px !important;
-                line-height: {self.line_slider.value() / 10} !important;
-            }}
-        """
+        self.theme.update_style_settings(max_width=value)
+        self._refresh_page()
         
-        # Inject the custom CSS with a more robust approach
-        js = f"""
-        (function() {{
-            // Remove any existing style first
-            const existingStyle = document.getElementById('sledge-custom-style');
-            if (existingStyle) {{
-                existingStyle.remove();
-            }}
-            
-            // Create and inject new style
-            const style = document.createElement('style');
-            style.id = 'sledge-custom-style';
-            style.textContent = `{custom_css}`;
-            document.documentElement.appendChild(style);
-            
-            // Force style application
-            document.documentElement.style.setProperty('--force-styles', 'true', 'important');
-            
-            // Monitor for dynamic content
-            const observer = new MutationObserver((mutations) => {{
-                mutations.forEach((mutation) => {{
-                    mutation.addedNodes.forEach((node) => {{
-                        if (node.nodeType === 1) {{  // Element node
-                            // Reapply styles to new elements
-                            node.style.cssText += `{custom_css}`;
-                        }}
-                    }});
-                }});
-            }});
-            
-            observer.observe(document.body, {{
-                childList: true,
-                subtree: true,
-                attributes: true,
-                characterData: true
-            }});
-        }})();
-        """
+    def _update_options(self):
+        """Update additional options"""
+        self.theme.update_style_settings(
+            hide_images=self.hide_images.isChecked(),
+            hide_ads=self.hide_ads.isChecked(),
+            justify_text=self.justify_text.isChecked(),
+            use_dyslexic_font=self.use_dyslexic_font.isChecked()
+        )
+        self._refresh_page()
         
-        page.runJavaScript(js)
+    def _refresh_page(self):
+        """Refresh the current page to apply style changes"""
+        if hasattr(self.parent(), 'current_tab'):
+            tab = self.parent().current_tab()
+            if tab and tab.page():
+                url = tab.page().url()
+                css, js = self.theme.inject_style(url)
+                tab.page().runJavaScript(js)

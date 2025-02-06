@@ -36,12 +36,6 @@ class BrowserWindow(QMainWindow):
         nav_layout.setContentsMargins(4, 4, 4, 4)
         nav_layout.setSpacing(4)
         
-        # Add URL bar
-        self.url_bar = QLineEdit()
-        self.url_bar.setPlaceholderText("Enter URL or search...")
-        self.url_bar.returnPressed.connect(self._handle_url_enter)
-        nav_layout.addWidget(self.url_bar)
-        
         # Add navigation buttons
         self.back_button = QPushButton("←")
         self.back_button.clicked.connect(self._handle_back)
@@ -54,6 +48,18 @@ class BrowserWindow(QMainWindow):
         self.reload_button = QPushButton("↻")
         self.reload_button.clicked.connect(self._handle_reload)
         nav_layout.insertWidget(2, self.reload_button)
+        
+        # Add URL bar
+        self.url_bar = QLineEdit()
+        self.url_bar.setPlaceholderText("Enter URL...")
+        self.url_bar.returnPressed.connect(self._handle_url_enter)
+        nav_layout.addWidget(self.url_bar)
+        
+        # Add search bar
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search...")
+        self.search_bar.returnPressed.connect(self._handle_search)
+        nav_layout.addWidget(self.search_bar)
         
         main_layout.addWidget(nav_bar)
         
@@ -166,6 +172,14 @@ class BrowserWindow(QMainWindow):
         current_tab = self.tab_widget.currentWidget()
         if current_tab:
             current_tab.setUrl(QUrl(url))
+            
+    def _handle_search(self):
+        """Handle search bar enter press"""
+        query = self.search_bar.text()
+        search_url = f"https://duckduckgo.com/?q={query}"
+        current_tab = self.tab_widget.currentWidget()
+        if current_tab:
+            current_tab.setUrl(QUrl(search_url))
             
     def _handle_back(self):
         """Handle back button click"""

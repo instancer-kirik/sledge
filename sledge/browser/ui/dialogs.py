@@ -1,40 +1,46 @@
 from PyQt6.QtWidgets import (
     QDialog, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QCheckBox, QLineEdit, QPushButton, QComboBox,
-    QFileDialog, QGroupBox
+    QFileDialog, QGroupBox, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt
+from ..security import SecurityPanel
 
 class SettingsDialog(QDialog):
+    """Browser settings dialog"""
+    
     def __init__(self, browser, parent=None):
         super().__init__(parent)
         self.browser = browser
         self.settings = browser.settings
-        self.setup_ui()
-
-    def setup_ui(self):
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(500)
+        self.resize(600, 400)
+        
+        # Main layout
         layout = QVBoxLayout(self)
-
-        # Create tab widget
+        
+        # Tab widget for different settings sections
         tabs = QTabWidget()
-        tabs.addTab(self.create_general_tab(), "General")
-        tabs.addTab(self.create_privacy_tab(), "Privacy")
-        tabs.addTab(self.create_appearance_tab(), "Appearance")
-        tabs.addTab(self.create_downloads_tab(), "Downloads")
-
+        
+        # Security settings
+        security_panel = SecurityPanel(browser.settings)
+        tabs.addTab(security_panel, "Security")
+        
+        # Theme settings
+        from ..ui.widgets import StyleAdjusterPanel
+        theme_panel = StyleAdjusterPanel(browser.theme)
+        tabs.addTab(theme_panel, "Theme")
+        
         layout.addWidget(tabs)
-
-        # Buttons
-        buttons = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        cancel_btn = QPushButton("Cancel")
-        save_btn.clicked.connect(self.accept)
-        cancel_btn.clicked.connect(self.reject)
-        buttons.addWidget(save_btn)
-        buttons.addWidget(cancel_btn)
-        layout.addLayout(buttons)
+        
+        # Dialog buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
     def create_general_tab(self):
         tab = QWidget()
