@@ -1,17 +1,16 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="sledge-browser",
-    version="0.1.0",
+    name="sledge",
+    version="0.1",
     packages=find_packages(),
     install_requires=[
-        'PyQt6>=6.4.0',
-        'PyQt6-WebEngine>=6.4.0',
-        'cryptography>=39.0.0',
+        'PyQt6',
+        'PyQt6-WebEngine',
     ],
     entry_points={
         'console_scripts': [
-            'sledge=sledge.browser:main',
+            'sledge=sledge.__main__:main',
         ],
     },
     author="Your Name",

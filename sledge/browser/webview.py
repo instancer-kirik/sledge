@@ -99,52 +99,77 @@ class WebView(QWebEngineView):
         if ok:
             url = self.url()
             if url.scheme() not in ("about", "chrome", "qrc"):
-                # Inject dark mode preference
+                # Initialize VideoJS and HLS support
                 js = """
-                    document.documentElement.style.colorScheme = 'dark';
-                    if (!document.getElementById('dark-mode-css')) {
-                        const style = document.createElement('style');
-                        style.id = 'dark-mode-css';
-                        style.textContent = `
-                            @media (prefers-color-scheme: dark) {
-                                :root {
-                                    color-scheme: dark;
-                                    forced-color-adjust: none;
-                                }
-                                
-                                html {
-                                    background: #2e3440 !important;
-                                    color: #d8dee9 !important;
-                                }
-                                
-                                body {
-                                    background: #2e3440 !important;
-                                    color: #d8dee9 !important;
-                                }
-                                
-                                a {
-                                    color: #88c0d0 !important;
-                                }
-                                
-                                input, textarea, select {
-                                    background: #3b4252 !important;
-                                    color: #d8dee9 !important;
-                                    border: 1px solid #434c5e !important;
-                                }
-                                
-                                button {
-                                    background: #3b4252 !important;
-                                    color: #d8dee9 !important;
-                                    border: 1px solid #434c5e !important;
-                                }
-                                
-                                button:hover {
-                                    background: #4c566a !important;
-                                    border-color: #88c0d0 !important;
+                    // Initialize VideoJS if present
+                    if (window.videojs) {
+                        // Configure VideoJS defaults
+                        videojs.options.autoplay = false;
+                        videojs.options.controls = true;
+                        videojs.options.html5 = {
+                            vhs: {
+                                overrideNative: true,
+                                fastQualityChange: true,
+                                useDevicePixelRatio: true
+                            },
+                            nativeAudioTracks: false,
+                            nativeVideoTracks: false,
+                            nativeTextTracks: false
+                        };
+                        
+                        // Add HLS support
+                        const players = document.getElementsByClassName('video-js');
+                        for (const player of players) {
+                            if (!player.player) {
+                                videojs(player, {
+                                    techOrder: ['html5'],
+                                    playbackRates: [0.5, 1, 1.5, 2],
+                                    responsive: true,
+                                    fluid: true
+                                });
+                            }
+                        }
+                        
+                        // Add error recovery
+                        videojs.hook('error', function(player) {
+                            const error = player.error();
+                            if (error && error.code === 4) {
+                                // Try alternative format
+                                const sources = player.currentSources();
+                                if (sources && sources.length > 0) {
+                                    const currentSrc = sources[0].src;
+                                    if (currentSrc) {
+                                        // Try switching between HLS and MP4
+                                        const newSrc = currentSrc.includes('.m3u8') 
+                                            ? currentSrc.replace('.m3u8', '.mp4')
+                                            : currentSrc.replace('.mp4', '.m3u8');
+                                        player.src(newSrc);
+                                        player.play();
+                                    }
                                 }
                             }
-                        `;
-                        document.head.appendChild(style);
+                        });
+                    }
+                    
+                    // Handle native video elements
+                    const videos = document.getElementsByTagName('video');
+                    for (const video of videos) {
+                        video.setAttribute('playsinline', '');
+                        video.setAttribute('webkit-playsinline', '');
+                        
+                        // Add error recovery
+                        video.addEventListener('error', (e) => {
+                            if (e.target.error.code === 4) {
+                                const currentSrc = e.target.src;
+                                if (currentSrc) {
+                                    const newSrc = currentSrc.includes('.m3u8')
+                                        ? currentSrc.replace('.m3u8', '.mp4')
+                                        : currentSrc.replace('.mp4', '.m3u8');
+                                    e.target.src = newSrc;
+                                    e.target.load();
+                                }
+                            }
+                        });
                     }
                 """
                 self.page().runJavaScript(js)

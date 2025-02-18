@@ -1,7 +1,7 @@
 from PyQt6.QtCore import Qt, QPoint, QEvent, QRect, QSize, QTimer, QPointF, QUrl, QPropertyAnimation, QEasingCurve
 from PyQt6.QtWidgets import (
     QTabWidget, QWidget, QHBoxLayout, QVBoxLayout, 
-    QToolButton, QMenu, QLabel, QPushButton, QDockWidget, QDialog, QDialogButtonBox, QLineEdit, QColorDialog, QComboBox, QStackedWidget, QTabBar
+    QToolButton, QMenu, QLabel, QPushButton, QDockWidget, QDialog, QDialogButtonBox, QLineEdit, QColorDialog, QComboBox, QStackedWidget, QTabBar, QListWidget, QListWidgetItem
 )
 from PyQt6.QtGui import QColor, QCursor, QIcon, QShortcut
 from PyQt6.QtGui import QKeySequence
@@ -39,11 +39,13 @@ class TabWidget(QTabWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         
+        # Initialize tab groups at the widget level
+        self.tab_groups = {}  # Map of tab index to group name
+        self.groups = {}      # Map of group name to group properties
+        
         # Initialize state tracking first
-        self.groups = {}
         self.min_group_collapse_threshold = 2
         self.hibernated_tabs = {} 
-        self.tab_groups = {}
         self.group_representatives = {}
         self.collapsed_groups = set()
         self.hibernation_pending = set()
@@ -70,10 +72,6 @@ class TabWidget(QTabWidget):
         
         # Create and set our enhanced TabBar
         self._tab_bar = TabBar(self)
-        self._tab_bar.setDrawBase(False)
-        self._tab_bar.setExpanding(False)
-        self._tab_bar.setMovable(True)
-        self._tab_bar.setTabsClosable(True)
         self.setTabBar(self._tab_bar)
         
         # Set focus policy to handle keyboard navigation
@@ -165,6 +163,18 @@ class TabWidget(QTabWidget):
         # Ensure widget is visible
         self.show()
         self.setMinimumSize(400, 300)  # Set minimum size to ensure visibility
+        
+        # Touch navigation setup
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
+        self.touch_start = None
+        self.touch_time = None
+        self.swipe_threshold = 100  # pixels
+        self.current_tab_widget = None
+        
+        # Initialize both preview mechanisms
+        self.preview_container = None
+        self.setup_preview_dropdown()
+        self.tab_spread = None  # Lazy load the spread dialog
         
     def _setup_corner_widget(self):
         """Setup the corner widget with control buttons"""
@@ -654,9 +664,12 @@ class TabWidget(QTabWidget):
         dialog.exec()
 
     def show_spread(self):
-        """Show tab spread view"""
-        dialog = TabSpreadDialog(self)
-        dialog.exec()
+        """Show full tab spread dialog (touch-friendly)"""
+        from .dialogs import TabSpreadDialog
+        if not self.tab_spread:
+            self.tab_spread = TabSpreadDialog(self)
+        self.tab_spread.populate_spread()
+        self.tab_spread.show()
 
     def show_group_menu(self, index):
         """Show menu for moving tab to a group"""
@@ -721,8 +734,16 @@ class TabWidget(QTabWidget):
         # Add tabs one at a time and verify
         def add_tab_to_group(url, group_name):
             # Create the tab first
-            idx = self.parent().add_new_tab(QUrl(url))
-            if idx >= 0:  # Verify tab was added
+            if isinstance(url, str) and any(domain in url.lower() for domain in ['wcostream', 'wcofun', 'wco.tv']):
+                # Create VideoTab for video URLs
+                from ..components.video_tab import VideoTab
+                tab = VideoTab(url, self)
+                idx = self.addTab(tab, "Video")
+            else:
+                # Create regular tab
+                idx = self.parent().add_new_tab(QUrl(url))
+            
+            if isinstance(idx, int) and idx >= 0:  # Verify tab was added
                 # Add to group and ensure it's tracked
                 self.addTabToGroup(idx, group_name)
                 # Make sure the URL is set in the URL bar
@@ -940,648 +961,46 @@ class TabWidget(QTabWidget):
         
         flash()
 
-    def _setup_group_preview(self):
-        """Setup group preview overlay"""
-        self.group_preview = QWidget(self)
-        self.group_preview.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        self.group_preview.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.group_preview.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.group_preview.hide()
+    def setup_preview_dropdown(self):
+        """Setup the quick preview dropdown for keyboard/mouse navigation"""
+        self.preview_container = QWidget(self)
+        self.preview_container.setWindowFlags(Qt.WindowType.Popup)
+        layout = QVBoxLayout(self.preview_container)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
         
-        # Create main layout
-        layout = QVBoxLayout(self.group_preview)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        # Create preview container with styling
-        self.preview_container = QWidget()
-        self.preview_container.setStyleSheet("""
-            QWidget {
+        # Create preview list
+        self.group_preview = QListWidget(self.preview_container)
+        self.group_preview.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.group_preview.setStyleSheet("""
+            QListWidget {
                 background: #2e3440;
-                border: 1px solid #434c5e;
+                border: 1px solid #4c566a;
                 border-radius: 4px;
+                min-width: 200px;
+                max-width: 400px;
             }
-            QWidget#tab_item {
-                background: transparent;
-                border: none;
+            QListWidget::item {
+                color: #d8dee9;
                 padding: 4px 8px;
-                margin: 2px;
-                border-radius: 3px;
+                border-bottom: 1px solid #3b4252;
             }
-            QWidget#tab_item[selected="true"] {
-                background: #5e81ac;
-                border: 1px solid #88c0d0;
-            }
-            QWidget#tab_item:hover {
+            QListWidget::item:hover {
                 background: #3b4252;
             }
-            QLabel {
-                color: #d8dee9;
-            }
-            QWidget#tab_item[selected="true"] QLabel {
-                color: #eceff4;
-                font-weight: bold;
+            QListWidget::item:selected {
+                background: #4c566a;
+                color: #88c0d0;
             }
         """)
-        container_layout = QVBoxLayout(self.preview_container)
-        container_layout.setContentsMargins(4, 4, 4, 4)
-        container_layout.setSpacing(2)
-        
-        # Add container to main layout
-        layout.addWidget(self.preview_container)
+        self.group_preview.itemClicked.connect(self._handle_preview_click)
+        layout.addWidget(self.group_preview)
 
-    def _show_delayed_preview(self):
-        """Show preview after delay"""
-        index = self.current_hover['index']
-        group = self.current_hover['group']
-        
-        if index < 0 or not group:
-            if self.group_preview and not self._is_mouse_over_preview():
-                self.group_preview.hide()
-            return
-        
-        if not self.group_preview:
-            self._setup_group_preview()
-        
-        # Clear existing preview items
-        for i in reversed(range(self.preview_container.layout().count())): 
-            widget = self.preview_container.layout().itemAt(i).widget()
-            if widget:
-                widget.deleteLater()
-        
-        # Get group tabs and check if it's a nested group
-        group_tabs = [i for i in range(self.count()) if self.tab_groups.get(i) == group]
-        group_obj = self.groups.get(group)
-        has_subgroups = group_obj and group_obj.subgroups
-        
-        # Initialize selection cursor to first tab if not set
-        if self.selection_cursor not in group_tabs:
-            self.selection_cursor = group_tabs[0] if group_tabs else -1
-        
-        # Only add header if there are subgroups
-        if has_subgroups:
-            header = QPushButton(f"{group}")
-            header.setStyleSheet(f"""
-                QPushButton {{
-                    background: {self.groups[group].color.name()};
-                    color: black;
-                    font-weight: bold;
-                    border-radius: 2px;
-                    margin: 2px;
-                }}
-            """)
-            self.preview_container.layout().addWidget(header)
-            
-            # Add subgroup headers and their tabs
-            for subgroup_name, subgroup in group_obj.subgroups.items():
-                subheader = QPushButton(f"▸ {subgroup_name}")
-                subheader.setStyleSheet(f"""
-                    QPushButton {{
-                        background: {subgroup.color.name()};
-                        color: black;
-                        font-weight: bold;
-                        border-radius: 2px;
-                        margin: 2px 2px 2px 12px;
-                        font-size: 90%;
-                    }}
-                """)
-                self.preview_container.layout().addWidget(subheader)
-                
-                # Add subgroup tabs
-                for tab_index in subgroup.tabs:
-                    if tab_index in group_tabs:
-                        self._add_tab_button(tab_index, indent=24)
-        else:
-            # Just add the tabs without any headers
-            for tab_index in group_tabs:
-                self._add_tab_button(tab_index)
-        
-        # Position preview below the tab
-        tab_rect = self._tab_bar.tabRect(index)
-        global_pos = self._tab_bar.mapToGlobal(tab_rect.bottomLeft())
-        
-        # Adjust position to align with tab
-        preview_x = global_pos.x()
-        preview_y = global_pos.y() + 2  # Small offset to not overlap with tab
-        
-        # Ensure preview stays within screen bounds
-        screen_rect = QApplication.primaryScreen().geometry()
-        preview_width = self.group_preview.sizeHint().width()
-        if preview_x + preview_width > screen_rect.right():
-            preview_x = screen_rect.right() - preview_width
-        
-        self.group_preview.move(preview_x, preview_y)
-        
-        # Show preview with fade effect
-        self.group_preview.show()
-        self.group_preview.raise_()
-        
-        # Install event filter for keyboard navigation
-        self.group_preview.installEventFilter(self)
-        self.group_preview.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.group_preview.setFocus()
-
-    def eventFilter(self, obj, event):
-        """Handle keyboard events for tab navigation"""
-        if event.type() == QEvent.Type.KeyPress:
-            key = event.key()
-            
-            # Handle keys when preview is visible
-            if self.group_preview and self.group_preview.isVisible():
-                if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-                    # Get list of tabs in current group
-                    current_group = self.current_hover['group']
-                    if not current_group:
-                        return False
-                        
-                    group_tabs = [i for i in range(self.count()) 
-                                if self.tab_groups.get(i) == current_group]
-                    if not group_tabs:
-                        return False
-                    
-                    # Find current position
-                    try:
-                        current_pos = group_tabs.index(self.selection_cursor)
-                    except ValueError:
-                        current_pos = -1
-                    
-                    # Move selection up/down
-                    if key == Qt.Key.Key_Up:
-                        new_pos = (current_pos - 1) % len(group_tabs)
-                    else:  # Key_Down
-                        new_pos = (current_pos + 1) % len(group_tabs)
-                    
-                    # Update selection cursor and refresh preview
-                    self.selection_cursor = group_tabs[new_pos]
-                    self._show_delayed_preview()
-                    event.accept()
-                    return True
-                    
-                elif key == Qt.Key.Key_Return:
-                    # Activate selected tab
-                    if self.selection_cursor >= 0:
-                        self.setCurrentIndex(self.selection_cursor)
-                        self.group_preview.hide()
-                    event.accept()
-                    return True
-                    
-                elif key == Qt.Key.Key_Escape:
-                    self.group_preview.hide()
-                    event.accept()
-                    return True
-                    
-                elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
-                    # Close preview and navigate in tab bar
-                    self.group_preview.hide()
-                    # Let the navigation be handled by the tab bar
-                    return False
-            
-            # Handle keys when tab bar has focus
-            if obj == self._tab_bar or obj == self:
-                current_index = self.currentIndex()
-                
-                if key == Qt.Key.Key_Down:
-                    # Show group preview for current tab
-                    group = self.tab_groups.get(current_index)
-                    if group:
-                        self._show_group_preview(current_index, group)
-                        event.accept()
-                    return False  # Let the page handle scrolling if no group
-                
-                elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
-                    # Only handle left/right if tab bar has focus
-                    if self._tab_bar.hasFocus() or self.hasFocus():
-                        # Get list of visible tabs
-                        visible_tabs = []
-                        for i in range(self.count()):
-                            if self._tab_bar.isTabVisible(i):
-                                visible_tabs.append(i)
-                        
-                        if not visible_tabs:
-                            return False
-                        
-                        # Find current position
-                        try:
-                            current_idx = visible_tabs.index(current_index)
-                        except ValueError:
-                            current_idx = 0
-                        
-                        # Move to adjacent tab
-                        if key == Qt.Key.Key_Left:
-                            new_idx = (current_idx - 1) % len(visible_tabs)
-                        else:  # Key_Right
-                            new_idx = (current_idx + 1) % len(visible_tabs)
-                        
-                        self.setCurrentIndex(visible_tabs[new_idx])
-                        event.accept()
-                        return True
-                    
-                    return False  # Let the page handle left/right if it has focus
-        
-        return super().eventFilter(obj, event)
-
-    def focusInEvent(self, event):
-        """Handle focus in event"""
-        super().focusInEvent(event)
-        # When tab widget gets focus, give it to the tab bar
-        self._tab_bar.setFocus()
-
-    def keyPressEvent(self, event):
-        """Handle key press events"""
-        # Forward all key events to the event filter
-        if not self.eventFilter(self, event):
-            super().keyPressEvent(event)
-
-    def leaveEvent(self, event):
-        """Handle mouse leaving the widget"""
-        super().leaveEvent(event)
-        if self.group_preview and not self._is_mouse_over_preview():
-            self.group_preview.hide()
-            self.current_hover = {'index': -1, 'group': None}
-
-    def _add_tab_button(self, tab_index, indent=8):
-        """Add a tab button to the preview with optional indentation"""
-        # Get the actual tab name, not the group representative label
-        tab = self.widget(tab_index)
-        is_hibernated = tab_index in self.hibernated_tabs
-        
-        # Create horizontal layout for icon and text
-        container = QWidget()
-        container.setObjectName("tab_item")
-        container.setProperty("selected", str(tab_index == self.selection_cursor).lower())
-        
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(indent, 2, 8, 2)
-        layout.setSpacing(6)
-        
-        # Add icon
-        icon_label = QLabel()
-        icon_label.setFixedSize(16, 16)
-        if is_hibernated:
-            # Use hibernated tab's stored icon or default
-            if self.hibernated_tabs[tab_index].get('icon'):
-                icon_label.setPixmap(self.hibernated_tabs[tab_index]['icon'].pixmap(16, 16))
-            else:
-                icon_label.setPixmap(QIcon.fromTheme('text-html').pixmap(16, 16))
-        elif hasattr(tab, 'icon') and not tab.icon().isNull():
-            icon_label.setPixmap(tab.icon().pixmap(16, 16))
-        else:
-            icon_label.setPixmap(QIcon.fromTheme('text-html').pixmap(16, 16))
-        layout.addWidget(icon_label)
-        
-        # Get the tab name
-        if is_hibernated:
-            tab_name = self.hibernated_tabs[tab_index].get('title', 'Hibernated Tab')
-        elif hasattr(tab, 'page'):
-            tab_name = tab.page().title()
-            if not tab_name:  # Fallback if page title is empty
-                url = tab.url().toString() if hasattr(tab, 'url') else ""
-                tab_name = url.split('/')[-1] if url else self.tabText(tab_index)
-        else:
-            tab_name = self.tabText(tab_index)
-        
-        # Clean up the name if it's a group representative
-        group = self.tab_groups.get(tab_index)
-        if group and tab_index == self.group_representatives.get(group):
-            # Strip any group-related formatting
-            tab_name = tab_name.split(" [")[0]  # Remove count
-            tab_name = tab_name.split(" (")[0]  # Remove count in parentheses
-            tab_name = tab_name.replace("▼ ", "").replace("► ", "")  # Remove arrows
-            tab_name = tab_name.replace(group, "").strip()  # Remove group name
-            
-            # If we stripped everything, try to get the original URL or title
-            if not tab_name or tab_name == group:
-                if is_hibernated:
-                    url = self.hibernated_tabs[tab_index].get('url', '')
-                    tab_name = url.split('/')[-1] if url else "Untitled"
-                elif hasattr(tab, 'url'):
-                    url = tab.url().toString()
-                    tab_name = url.split('/')[-1] if url else "Untitled"
-                else:
-                    tab_name = "Untitled"
-        
-        # Add text label with hibernation indicator if needed
-        text_label = QLabel(f"💤 {tab_name}" if is_hibernated else tab_name)
-        text_label.setStyleSheet("""
-            QLabel {
-                color: #d8dee9;
-                font-size: 12px;
-            }
-        """)
-        layout.addWidget(text_label)
-        
-        # Make container clickable with improved handling
-        def handle_click(e, i=tab_index):
-            # First restore if hibernated
-            if i in self.hibernated_tabs:
-                self._restore_tab(i)
-            
-            # Full wake the tab
-            if hasattr(self, 'memory_manager'):
-                self.memory_manager.wake_tab(i)
-                # Set keep_active flag to prevent auto-sleep
-                group = self.tab_groups.get(i)
-                if group and group in self.groups:
-                    self.groups[group].keep_active = True
-            
-            # Switch to the tab
-            self.setCurrentIndex(i)
-            
-            # Close any preview/switcher views
-            if self.group_preview and self.group_preview.isVisible():
-                self.group_preview.hide()
-            
-            # Close parent dialog if it exists (tab list or spread view)
-            parent_dialog = self.window()
-            if isinstance(parent_dialog, QDialog):
-                parent_dialog.accept()
-            
-        container.mousePressEvent = handle_click
-        container.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        self.preview_container.layout().addWidget(container)
-
-    def _is_mouse_over_preview(self):
-        """Check if mouse is over the preview popup"""
-        if not self.group_preview or not self.group_preview.isVisible():
-            return False
-        
-        mouse_pos = QCursor.pos()
-        preview_rect = self.group_preview.geometry()
-        tab_bar_rect = QRect(self._tab_bar.mapToGlobal(QPoint(0, 0)), self._tab_bar.size())
-        
-        return preview_rect.contains(mouse_pos) or tab_bar_rect.contains(mouse_pos)
-
-    def _handle_tab_close(self, index):
-        """Handle tab close requests"""
-        if self.count() > 2:  # Keep at least one tab plus the new tab button
-            self.removeTab(index)
-
-    def _update_url_bar(self):
-        """Update URL bar with current tab's URL"""
-        tab = self.widget(self.currentIndex())
-        if hasattr(tab, 'url'):
-            self.parent().url_bar.setText(tab.url().toString())
-
-    def update_breadcrumbs(self):
-        """Update breadcrumb navigation"""
-        # Clear existing breadcrumbs
-        while self.breadcrumb_layout.count():
-            item = self.breadcrumb_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        
-        current = self.currentIndex()
-        current_group = self.tab_groups.get(current)
-        
-        if current_group:
-            # Add compact group indicator
-            group_btn = QPushButton(self.breadcrumb_container)
-            group_btn.setFixedHeight(24)
-            group_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            
-            # Set text based on group state
-            is_collapsed = current_group in self.collapsed_groups
-            btn_text = f"{'►' if is_collapsed else '▼'} {current_group}"
-            group_btn.setText(btn_text)
-            
-            # Style the button with group color
-            group_color = self.groups[current_group].color
-            group_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {group_color.name()};
-                    color: black;
-                    font-weight: bold;
-                    border: none;
-                    border-radius: 3px;
-                    padding: 2px 8px;
-                    margin: 0;
-                    text-align: left;
-                }}
-                QPushButton:hover {{
-                    background: {group_color.lighter(110).name()};
-                }}
-            """)
-            
-            group_btn.clicked.connect(lambda: self._toggle_group(current_group))
-            self.breadcrumb_layout.addWidget(group_btn)
-            
-            # Add tab count in a more compact way
-            count_label = QLabel(f"({len(self.groups[current_group].tabs)})", self.breadcrumb_container)
-            count_label.setStyleSheet("""
-                QLabel {
-                    color: #d8dee9;
-                    padding: 0 4px;
-                    font-size: 11px;
-                }
-            """)
-            self.breadcrumb_layout.addWidget(count_label)
-        
-        # Show/hide status container based on whether we have content
-        self.status_container.setVisible(bool(current_group))
-
-    def collapse_all_groups(self):
-        """Collapse all groups immediately"""
-        # Store current tab
-        current_index = self.currentIndex()
-        current_group = self.tab_groups.get(current_index)
-        
-        # Collapse all groups
-        for group in list(self.groups.keys()):
-            self.collapsed_groups.add(group)
-        
-        self._organize_tabs()
-        
-        # Restore current tab selection
-        if current_group:
-            self.setCurrentIndex(self.group_representatives[current_group])
-        else:
-            self.setCurrentIndex(current_index)
-
-    def setup_shortcuts(self):
-        """Setup keyboard shortcuts"""
-        # Close current tab
-        close_tab = QShortcut(QKeySequence("Ctrl+W"), self)
-        close_tab.activated.connect(self.close_current_tab)
-        
-        # Add shortcuts for group navigation
-        next_in_group = QShortcut(QKeySequence("Alt+J"), self)
-        next_in_group.activated.connect(self.next_tab_in_group)
-        
-        prev_in_group = QShortcut(QKeySequence("Alt+K"), self)
-        prev_in_group.activated.connect(self.prev_tab_in_group)
-        
-        # Add shortcuts for group expansion
-        expand_group = QShortcut(QKeySequence("Alt+Down"), self)
-        expand_group.activated.connect(self.expand_current_group)
-        
-        collapse_group = QShortcut(QKeySequence("Alt+Up"), self)
-        collapse_group.activated.connect(self.collapse_current_group)
-
-    def close_current_tab(self):
-        """Close the current tab"""
-        current = self.currentIndex()
-        if current >= 0:
-            self.removeTab(current)
-
-    def expand_current_group(self):
-        """Expand the current tab's group"""
-        current = self.currentIndex()
-        group = self.tab_groups.get(current)
-        if group and group in self.collapsed_groups:
-            self.collapsed_groups.remove(group)
-            self._organize_tabs()
-
-    def collapse_current_group(self):
-        """Collapse the current tab's group"""
-        current = self.currentIndex()
-        group = self.tab_groups.get(current)
-        if group and group not in self.collapsed_groups:
-            self.collapsed_groups.add(group)
-            self._organize_tabs()
-
-    def next_tab_in_group(self):
-        """Switch to next tab in current group"""
-        current = self.currentIndex()
-        current_group = self.tab_groups.get(current)
-        if not current_group:
-            return
-            
-        group_tabs = [i for i in range(self.count()) 
-                     if self.tab_groups.get(i) == current_group]
-        if not group_tabs:
-            return
-            
-        current_pos = group_tabs.index(current)
-        next_tab = group_tabs[(current_pos + 1) % len(group_tabs)]
-        self.setCurrentIndex(next_tab)
-
-    def prev_tab_in_group(self):
-        """Switch to previous tab in current group"""
-        current = self.currentIndex()
-        current_group = self.tab_groups.get(current)
-        if not current_group:
-            return
-            
-        group_tabs = [i for i in range(self.count()) 
-                     if self.tab_groups.get(i) == current_group]
-        if not group_tabs:
-            return
-            
-        current_pos = group_tabs.index(current)
-        prev_tab = group_tabs[(current_pos - 1) % len(group_tabs)]
-        self.setCurrentIndex(prev_tab)
-
-    def tabBarClicked(self, index):
-        """Handle tab bar clicks with improved group behavior"""
-        if not self._tab_bar.isTabVisible(index):
-            return
-            
-        group = self.tab_groups.get(index)
-        if group and index == self.group_representatives.get(group):
-            # Show group preview for representative tab
-            self._show_group_preview(index, group)
-            return
-        
-        # Regular tab selection
-        super().tabBarClicked(index)
-        self.selection_cursor = index
-        
-        # Update URL bar
-        tab = self.widget(index)
-        if hasattr(tab, 'url'):
-            self.parent().url_bar.setText(tab.url().toString())
-
-    def setup_selection_shortcuts(self):
-        """Setup keyboard shortcuts for tab selection"""
-        # Ctrl+Tab to move forward
-        next_tab = QShortcut(QKeySequence("Ctrl+Tab"), self)
-        next_tab.activated.connect(lambda: self.move_selection_cursor(1))
-
-    def move_selection_cursor(self, direction):
-        """Move the selection cursor in the specified direction"""
-        if self.count() > 1:
-            self.selection_cursor = (self.selection_cursor + direction) % (self.count() - 1)
-            self.setCurrentIndex(self.selection_cursor)
-            self.update_tab_appearances()
-
-    def activate_selected_tab(self):
-        """Switch to the currently selected tab"""
-        if self.selection_mode and self.selection_cursor is not None:
-            old_index = self.currentIndex()
-            self.setCurrentIndex(self.selection_cursor)
-            # If we're activating a group representative, expand the group
-            group = self.tab_groups.get(self.selection_cursor)
-            if group and self.selection_cursor == self.group_representatives.get(group):
-                if group in self.collapsed_groups:
-                    self._toggle_group(group)
-            self.exit_selection_mode()
-
-    def exit_selection_mode(self):
-        """Exit tab selection mode"""
-        self.selection_mode = False
-        self.selection_cursor = None
-        self.update_tab_appearances()
-
-    def close_tab(self, index):
-        """Close the tab at the specified index"""
-        self.removeTab(index)
-        
-    def removeTab(self, index):
-        """Override removeTab to handle group representative tabs"""
-        group = self.tab_groups.get(index)
-        is_representative = group and index == self.group_representatives.get(group)
-        
-        if is_representative:
-            # Find another tab from the same group to be the new representative
-            group_tabs = [i for i in range(self.count()) 
-                        if i != index and self.tab_groups.get(i) == group]
-            if group_tabs:
-                # Set new representative before removing the tab
-                self.group_representatives[group] = group_tabs[0]
-                super().removeTab(index)
-                self._organize_tabs()
-                return
-            else:
-                # Last tab in group - remove group
-                del self.groups[group]
-                if group in self.collapsed_groups:
-                    self.collapsed_groups.remove(group)
-                if group in self.group_representatives:
-                    del self.group_representatives[group]
-        
-        super().removeTab(index)
-        self._organize_tabs()
-
-    def setCurrentIndex(self, index):
-        """Override to handle hibernated tabs"""
-        if index in self.hibernated_tabs:
-            self._restore_tab(index)
-        super().setCurrentIndex(index)
-
-    def _show_group_preview(self, index, group):
-        """Show group preview dropdown"""
-        self.current_hover = {'index': index, 'group': group}
-        self._show_delayed_preview()
-
-    def _show_group_tabs(self, group_name):
-        """Show a menu of all tabs in the group"""
-        current_tab = self.currentIndex()
-        menu = QMenu(self)
-        
-        # Get all tabs in this group
-        group_tabs = [(i, self.tabText(i)) for i in range(self.count()) 
-                     if self.tab_groups.get(i) == group_name]
-        
-        for tab_index, tab_title in group_tabs:
-            action = menu.addAction(tab_title)
-            action.setCheckable(True)
-            action.setChecked(tab_index == current_tab)
-            action.triggered.connect(lambda checked, idx=tab_index: self.setCurrentIndex(idx))
-        
-        # Show menu below current tab
-        tab_rect = self._tab_bar.tabRect(current_tab)
-        menu.popup(self._tab_bar.mapToGlobal(tab_rect.bottomLeft()))
+    def _handle_preview_click(self, item):
+        """Handle click on preview item"""
+        tab_index = item.data(Qt.ItemDataRole.UserRole)
+        self.setCurrentIndex(tab_index)
+        self.preview_container.hide()
 
     def show_tab_menu(self, tab_index, position):
         """Show context menu for the specified tab"""
@@ -1624,16 +1043,6 @@ class TabWidget(QTabWidget):
         
         # Show the menu at the specified position
         menu.popup(position)
-
-    def duplicate_tab(self, index):
-        """Duplicate the specified tab"""
-        tab = self.widget(index)
-        if hasattr(tab, 'url'):
-            new_index = self.add_new_tab(tab.url())
-            # Copy group assignment if any
-            group = self.tab_groups.get(index)
-            if group:
-                self.addTabToGroup(new_index, group)
 
     def toggle_pin_tab(self, index, pinned):
         """Toggle pin state of a tab"""
@@ -1834,6 +1243,153 @@ class TabWidget(QTabWidget):
         for i in range(self.count()):
             self.memory_manager.wake_tab(i)
 
+    def create_group(self, name, tabs):
+        """Create a new tab group"""
+        if name not in self.groups:
+            self.groups[name] = {'color': '#88c0d0'}  # Default color
+            
+        # Add tabs to group
+        for tab_index in tabs:
+            self.tab_groups[tab_index] = name
+            
+        # Set first tab as representative
+        if tabs:
+            self.group_representatives[name] = tabs[0]
+            
+        # Update tab appearances
+        for tab_index in tabs:
+            self._tab_bar.update_tab_appearance(tab_index)
+
+    def _show_delayed_preview(self):
+        """Show preview after a short delay to prevent flicker"""
+        if hasattr(self, 'current_hover'):
+            index = self.current_hover.get('index', -1)
+            group = self.current_hover.get('group')
+            if index >= 0 and group:
+                self._show_group_preview(index, group, use_spread=False)
+
+    def close_tab(self, index):
+        """Close the tab at the given index"""
+        # Check if tab is in a group
+        group = self.tab_groups.get(index)
+        if group:
+            # Update group if this was the representative
+            if self.group_representatives.get(group) == index:
+                # Find new representative
+                for i in range(self.count()):
+                    if i != index and self.tab_groups.get(i) == group:
+                        self.group_representatives[group] = i
+                        break
+            # Remove from group
+            del self.tab_groups[index]
+            
+        # Clean up memory management
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.remove_tab(index)
+            
+        # Remove the tab
+        self.removeTab(index)
+        
+        # If this was the last tab, create a new one
+        if self.count() == 0:
+            self.parent().add_new_tab()
+
+    def update_breadcrumbs(self):
+        """Update the breadcrumb navigation in the status bar"""
+        # Clear existing breadcrumbs safely
+        while self.breadcrumb_layout.count():
+            item = self.breadcrumb_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        # Get current tab and group
+        current_index = self.currentIndex()
+        current_group = self.tab_groups.get(current_index)
+        
+        if not current_group or current_group not in self.groups:
+            self.breadcrumb_container.hide()
+            return
+        
+        self.breadcrumb_container.show()
+        
+        # Add group indicator
+        group_color = self.groups[current_group].color
+        group_label = QLabel(f" {current_group} ")
+        group_label.setStyleSheet(f"""
+            QLabel {{
+                background: {group_color.name()};
+                color: black;
+                padding: 2px 6px;
+                border-radius: 2px;
+                font-weight: bold;
+            }}
+        """)
+        self.breadcrumb_layout.addWidget(group_label)
+        
+        # Add separator
+        separator = QLabel("▶")
+        separator.setStyleSheet("color: #4c566a;")
+        self.breadcrumb_layout.addWidget(separator)
+        
+        # Add tab title
+        tab = self.widget(current_index)
+        if hasattr(tab, 'page'):
+            title = tab.page().title()
+            if title:
+                title_label = QLabel(title)
+                title_label.setStyleSheet("""
+                    QLabel {
+                        color: #d8dee9;
+                        padding: 2px 6px;
+                    }
+                """)
+                self.breadcrumb_layout.addWidget(title_label)
+        
+        # Add stretch to push everything to the left
+        self.breadcrumb_layout.addStretch()
+
+    def _show_group_preview(self, index, group, use_spread=False):
+        """Show group preview using appropriate mechanism"""
+        if use_spread:
+            # Use spread dialog for touch/mobile
+            from .dialogs import TabSpreadDialog
+            if not self.tab_spread:
+                self.tab_spread = TabSpreadDialog(self)
+            self.tab_spread.populate_spread(group_filter=group)
+            self.tab_spread.show()
+        else:
+            # Use dropdown for keyboard/mouse
+            if not self.preview_container:
+                return
+            
+            # Get all tabs in this group
+            group_tabs = []
+            for i in range(self.count()):
+                if self.tab_groups.get(i) == group:
+                    group_tabs.append(i)
+            
+            if not group_tabs:
+                return
+            
+            # Clear and populate preview list
+            self.group_preview.clear()
+            for tab_index in group_tabs:
+                item = QListWidgetItem(self.tabText(tab_index))
+                item.setData(Qt.ItemDataRole.UserRole, tab_index)
+                self.group_preview.addItem(item)
+            
+            # Position and show preview
+            tab_rect = self.tabBar().tabRect(index)
+            global_pos = self.tabBar().mapToGlobal(tab_rect.bottomLeft())
+            self.preview_container.move(global_pos)
+            self.preview_container.show()
+            self.preview_container.raise_()
+            
+            # Focus and preselect
+            self.group_preview.setFocus()
+            if self.group_preview.count() > 0:
+                self.group_preview.setCurrentRow(0)
+
 class TabBar(QTabBar):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1858,6 +1414,9 @@ class TabBar(QTabBar):
         # Track drag state
         self.drag_active = False
         self.drag_threshold = 20  # pixels
+        
+        # Enable keyboard navigation
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
         self.setStyleSheet("""
             QTabBar::tab {
@@ -1921,8 +1480,8 @@ class TabBar(QTabBar):
                             if tab_widget and hasattr(tab_widget, 'tab_groups'):
                                 group = tab_widget.tab_groups.get(tab_index)
                                 if group and tab_index == tab_widget.group_representatives.get(group):
-                                    # Show group preview
-                                    tab_widget._show_group_preview(tab_index, group)
+                                    # Use spread for touch
+                                    tab_widget._show_group_preview(tab_index, group, use_spread=True)
                                 else:
                                     # Regular tab switch
                                     tab_widget.setCurrentIndex(tab_index)
@@ -1951,7 +1510,7 @@ class TabBar(QTabBar):
                         if tab_index >= 0:
                             group = tab_widget.tab_groups.get(tab_index)
                             if group:
-                                tab_widget._show_group_preview(tab_index, group)
+                                tab_widget._show_group_preview(tab_index, group, use_spread=True)
             return True
             
         return super().event(event)
@@ -1968,3 +1527,51 @@ class TabBar(QTabBar):
             
         self.touch_start = None
         self.touch_tab_index = -1
+
+    def update_tab_appearance(self, index):
+        """Update tab appearance based on state"""
+        if not hasattr(self.parent(), 'memory_manager'):
+            return
+            
+        # Get tab state
+        is_hibernated = index in getattr(self.parent().memory_manager, 'hibernated_tabs', {})
+        is_active = self.currentIndex() == index
+        
+        # Set style based on state
+        if is_hibernated:
+            self.setTabTextColor(index, QColor("#666666"))  # Dimmed for hibernated tabs
+        elif is_active:
+            self.setTabTextColor(index, QColor("#88c0d0"))  # Bright for active tab
+        else:
+            self.setTabTextColor(index, QColor("#d8dee9"))  # Normal color
+
+    def keyPressEvent(self, event):
+        """Handle keyboard navigation"""
+        if event.key() == Qt.Key.Key_Left:
+            # Move to previous tab
+            current = self.currentIndex()
+            if current > 0:
+                self.setCurrentIndex(current - 1)
+            event.accept()
+            return
+            
+        elif event.key() == Qt.Key.Key_Right:
+            # Move to next tab
+            current = self.currentIndex()
+            if current < self.count() - 1:
+                self.setCurrentIndex(current + 1)
+            event.accept()
+            return
+            
+        elif event.key() == Qt.Key.Key_Down:
+            # Show group preview dropdown
+            current = self.currentIndex()
+            tab_widget = self.parent()
+            if tab_widget and hasattr(tab_widget, 'tab_groups'):
+                group = tab_widget.tab_groups.get(current)
+                if group and current == tab_widget.group_representatives.get(group):
+                    tab_widget._show_group_preview(current, group, use_spread=False)
+            event.accept()
+            return
+            
+        super().keyPressEvent(event)

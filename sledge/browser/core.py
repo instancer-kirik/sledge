@@ -4,7 +4,7 @@ from PyQt6.QtCore import QUrl, Qt, QSize, QFileInfo, QPoint, QSettings, QStandar
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QToolBar, QLineEdit, QProgressBar, 
     QStatusBar, QMenu, QDialog, QVBoxLayout, QPushButton, QFileDialog,
-    QDockWidget, QWidget, QLabel, QListWidget, QListWidgetItem, QComboBox, QHBoxLayout, QGroupBox, QCheckBox, QTabWidget
+    QDockWidget, QWidget, QLabel, QListWidget, QListWidgetItem, QComboBox, QHBoxLayout, QGroupBox, QCheckBox, QTabWidget, QMessageBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import (
@@ -21,6 +21,8 @@ from .ui.styles import BrowserTheme, apply_dark_mode_js
 from .history import HistoryManager
 from .ui.dialogs import SettingsDialog
 from .security import SecurityPanel, RequestInterceptor
+from .gleam import GleamProjectHandler
+from .components.video_tab import VideoTab
 
 class ExtensionManager:
     def __init__(self, browser):
@@ -196,6 +198,9 @@ class SledgeBrowser(QMainWindow):
             print("🔍 [SLEDGE INIT] Initialization Complete!")
             print("="*50 + "\n")
             
+            # Add Gleam project support
+            self.gleam_handler = None
+            
         except Exception as e:
             print("Fatal error during SledgeBrowser initialization:", e)
             raise
@@ -234,21 +239,22 @@ class SledgeBrowser(QMainWindow):
         profile.setPersistentStoragePath("./cache")
         profile.setCachePath("./cache")
         
-        # Configure web settings
+        # Configure web settings for better performance
         settings = profile.settings()
+        
+        # Enable essential features
         settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.ShowScrollBars, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.DnsPrefetchEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.AutoLoadImages, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.WebRTCPublicInterfacesOnly, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AutoLoadImages, True)  # Enable image loading
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)  # Enable plugins for video
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+        
+        # Disable only problematic features
+        settings.setAttribute(QWebEngineSettings.WebAttribute.ErrorPageEnabled, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.ScrollAnimatorEnabled, False)
         
         # Add request interceptor
         interceptor = self.create_request_interceptor()
@@ -261,40 +267,172 @@ class SledgeBrowser(QMainWindow):
         """Inject JavaScript to handle media errors"""
         js = """
         (function() {
-            // Override video error handling
-            HTMLMediaElement.prototype._play = HTMLMediaElement.prototype.play;
-            HTMLMediaElement.prototype.play = function() {
-                var video = this;
-                return video._play().catch(function(error) {
-                    console.error('Video playback error:', error);
-                    // Try to recover from error
-                    if (error.name === 'NotSupportedError') {
-                        // Try alternative video source or format
-                        if (video.src && !video.src.includes('&type=video')) {
-                            video.src = video.src + '&type=video';
-                            return video._play();
+            // Wait for VideoJS to be available
+            function waitForVideoJS(callback, maxAttempts = 10) {
+                let attempts = 0;
+                const check = () => {
+                    attempts++;
+                    if (window.videojs) {
+                        callback();
+                    } else if (attempts < maxAttempts) {
+                        setTimeout(check, 500);
+                    }
+                };
+                check();
+            }
+
+            // Initialize VideoJS with proper configuration
+            waitForVideoJS(() => {
+                // Configure VideoJS defaults
+                videojs.options.techOrder = ['html5'];
+                videojs.options.html5 = {
+                    nativeTextTracks: false,
+                    nativeAudioTracks: false,
+                    nativeVideoTracks: false,
+                    hls: {
+                        overrideNative: true,
+                        enableLowInitialPlaylist: true,
+                        smoothQualityChange: true,
+                        allowSeeksWithinUnsafeLiveWindow: true,
+                        handlePartialData: true
+                    }
+                };
+                
+                // Add HLS support
+                if (window.Hls && window.Hls.isSupported()) {
+                    class HlsHandler {
+                        constructor(source, tech, options) {
+                            this.tech = tech;
+                            this.source = source;
+                            this.hls = new Hls({
+                                enableWorker: true,
+                                lowLatencyMode: true,
+                                backBufferLength: 90,
+                                maxBufferLength: 30,
+                                maxMaxBufferLength: 600,
+                                maxBufferSize: 60 * 1000 * 1000,
+                                maxBufferHole: 0.5,
+                                lowLatencyMode: true
+                            });
+                            this.hls.attachMedia(tech.el());
+                            this.hls.loadSource(source.src);
+                            
+                            // Handle HLS errors
+                            this.hls.on(Hls.Events.ERROR, (event, data) => {
+                                if (data.fatal) {
+                                    switch(data.type) {
+                                        case Hls.ErrorTypes.NETWORK_ERROR:
+                                            console.log('Fatal network error encountered, trying to recover');
+                                            this.hls.startLoad();
+                                            break;
+                                        case Hls.ErrorTypes.MEDIA_ERROR:
+                                            console.log('Fatal media error encountered, trying to recover');
+                                            this.hls.recoverMediaError();
+                                            break;
+                                        default:
+                                            console.log('Fatal error, cannot recover');
+                                            this.hls.destroy();
+                                            break;
+                                    }
+                                }
+                            });
+                        }
+                        dispose() {
+                            if (this.hls) {
+                                this.hls.destroy();
+                            }
                         }
                     }
-                    throw error;
-                });
-            };
-            
-            // Add video error listener
-            document.addEventListener('error', function(e) {
-                if (e.target.tagName === 'VIDEO') {
-                    console.error('Video error:', e);
-                    // Try to recover
-                    if (e.target.error.code === 4) {
-                        console.log('Attempting to recover from MEDIA_ERR_SRC_NOT_SUPPORTED');
-                        // Try alternative source
-                        if (e.target.src && !e.target.src.includes('&type=video')) {
-                            e.target.src = e.target.src + '&type=video';
-                            e.target.load();
-                            e.target.play();
+                    
+                    // Register HLS handler
+                    videojs.getTech('Html5').registerSourceHandler({
+                        canHandleSource: function(source) {
+                            if (source.type === 'application/x-mpegURL') return 'probably';
+                            if (source.src && source.src.indexOf('.m3u8') > -1) return 'probably';
+                            return '';
+                        },
+                        handleSource: function(source, tech, options) {
+                            return new HlsHandler(source, tech, options);
                         }
+                    }, 0);
+                }
+                
+                // Fix common video player issues
+                function fixVideoPlayers() {
+                    // Fix VideoJS players
+                    document.querySelectorAll('.video-js').forEach(player => {
+                        if (!player.player) {
+                            videojs(player, {
+                                html5: {
+                                    vhs: {
+                                        overrideNative: true,
+                                        enableLowInitialPlaylist: true,
+                                        smoothQualityChange: true,
+                                        allowSeeksWithinUnsafeLiveWindow: true,
+                                        handlePartialData: true
+                                    },
+                                    nativeAudioTracks: false,
+                                    nativeVideoTracks: false
+                                },
+                                controls: true,
+                                autoplay: false,
+                                preload: 'auto',
+                                responsive: true,
+                                fluid: true,
+                                playbackRates: [0.5, 1, 1.25, 1.5, 2]
+                            });
+                        }
+                    });
+                }
+                
+                // Handle WCO specific issues
+                function fixWCOVideo() {
+                    const videos = document.getElementsByTagName('video');
+                    for (const video of videos) {
+                        // Force HTML5 mode
+                        video.setAttribute('playsinline', '');
+                        video.setAttribute('webkit-playsinline', '');
+                        
+                        // Try to extract direct stream URL if available
+                        if (video.src && video.src.includes('wco')) {
+                            const possibleSources = Array.from(document.querySelectorAll('source'))
+                                .map(s => s.src)
+                                .filter(s => s && !s.includes('blob:'));
+                            
+                            if (possibleSources.length > 0) {
+                                video.src = possibleSources[0];
+                            }
+                        }
+                        
+                        // Add error recovery
+                        video.addEventListener('error', (e) => {
+                            console.log('Video error:', e.target.error);
+                    if (e.target.error.code === 4) {
+                                // Try to reload with different source type
+                                const currentSrc = e.target.src;
+                                if (currentSrc) {
+                                    // Try alternative format
+                                    const newSrc = currentSrc.replace('.m3u8', '.mp4')
+                                        .replace('.mp4', '.m3u8');
+                                    console.log('Trying alternative source:', newSrc);
+                                    e.target.src = newSrc;
+                            e.target.load();
+                                }
+                            }
+                        });
                     }
                 }
-            }, true);
+                
+                // Run fixes
+                fixVideoPlayers();
+                fixWCOVideo();
+                
+                // Watch for dynamic content
+                new MutationObserver(() => {
+                    fixVideoPlayers();
+                    fixWCOVideo();
+                }).observe(document.body, {childList: true, subtree: true});
+            });
         })();
         """
         
@@ -495,10 +633,11 @@ class SledgeBrowser(QMainWindow):
         # Create ImprovedTabWidget
         print("🎨 [SLEDGE UI] Creating tab widget...")
         self.tabs = TabWidget()
-        print("🎨 [SLEDGE UI] Successfully created TabWidget")
-        self.tabs.tabCloseRequested.connect(self.close_tab)
+        # Initialize tab groups explicitly
+        self.tabs._tab_bar = self.tabs.tabBar()
+        self.tabs._tab_bar.tab_groups = {}  # Initialize tab groups dict
         self.setCentralWidget(self.tabs)
-        print("🎨 [SLEDGE UI] Created tab widget")
+        print("🎨 [SLEDGE UI] Created TabWidget")
 
         # Create NavBar
         print("🎨 [SLEDGE UI] Creating navbar...")
@@ -514,7 +653,7 @@ class SledgeBrowser(QMainWindow):
         back_btn.setToolTip("Go Back (Alt+Left)")
         back_btn.setShortcut("Alt+Left")
         back_btn.setStatusTip("Go back one page")
-        back_btn.triggered.connect(lambda: self.current_tab().back())
+        back_btn.triggered.connect(lambda: self.tabs.handle_navigation('back'))
         navbar.addAction(back_btn)
         print("🎨 [SLEDGE UI] Added back button")
 
@@ -522,7 +661,7 @@ class SledgeBrowser(QMainWindow):
         forward_btn.setToolTip("Go Forward (Alt+Right)")
         forward_btn.setShortcut("Alt+Right")
         forward_btn.setStatusTip("Go forward one page")
-        forward_btn.triggered.connect(lambda: self.current_tab().forward())
+        forward_btn.triggered.connect(lambda: self.tabs.handle_navigation('forward'))
         navbar.addAction(forward_btn)
         print("🎨 [SLEDGE UI] Added forward button")
 
@@ -530,7 +669,7 @@ class SledgeBrowser(QMainWindow):
         reload_btn.setToolTip("Reload Page (F5)")
         reload_btn.setShortcut("F5")
         reload_btn.setStatusTip("Reload current page")
-        reload_btn.triggered.connect(lambda: self.current_tab().reload())
+        reload_btn.triggered.connect(lambda: self.tabs.handle_navigation('reload'))
         navbar.addAction(reload_btn)
         print("🎨 [SLEDGE UI] Added reload button")
 
@@ -665,6 +804,24 @@ class SledgeBrowser(QMainWindow):
         """Add new browser tab with process isolation and optimizations"""
         if qurl is None:
             qurl = QUrl('about:blank')
+        
+        # Convert string URLs to QUrl
+        if isinstance(qurl, str):
+            qurl = QUrl(qurl)
+            
+        # Check if this is a video URL
+        url_string = qurl.toString().lower()
+        is_video = any(ext in url_string for ext in ['.mp4', '.m3u8', '.ts', '.webm']) or \
+                  any(term in url_string for term in ['getvid', 'getVideo', 'embed']) or \
+                  any(domain in url_string for domain in ['wcostream', 'wcofun', 'wco.tv'])
+                  
+        if is_video:
+            # Create video tab for video content
+            from .components.video_tab import VideoTab
+            tab = VideoTab(url_string, self)
+            i = self.tabs.addTab(tab, label)
+            self.tabs.setCurrentIndex(i)
+            return tab
             
         # Create browser with dark background and process isolation
         browser = QWebEngineView()
@@ -677,6 +834,49 @@ class SledgeBrowser(QMainWindow):
         # Create page with optimizations
         page = QWebEnginePage(self.profile, browser)  # Use main profile to prevent early deletion
         page.setBackgroundColor(QColor("#212121"))
+        
+        # Inject immediate dark mode before any content loads
+        immediate_dark = """
+        (function() {
+            // Immediate dark mode style
+            const style = document.createElement('style');
+            style.textContent = `
+                html, body {
+                    background-color: #212121 !important;
+                    color: #e0e0e0 !important;
+                }
+                * {
+                    color-scheme: dark !important;
+                }
+            `;
+            document.documentElement.appendChild(style);
+            
+            // Force dark mode preference
+            document.documentElement.style.colorScheme = 'dark';
+            
+            // Handle dynamic content
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    mutation.addedNodes.forEach((node) => {
+                        if (node.nodeType === 1) {  // Element node
+                            node.style.colorScheme = 'dark';
+                            if (node.tagName === 'IFRAME') {
+                                try {
+                                    node.contentDocument.documentElement.style.colorScheme = 'dark';
+                                } catch(e) {}
+                            }
+                        }
+                    });
+                });
+            });
+            
+            observer.observe(document, {
+                childList: true,
+                subtree: true
+            });
+        })();
+        """
+        page.runJavaScript(immediate_dark)
         
         # Performance optimizations
         settings = page.settings()
@@ -840,9 +1040,44 @@ class SledgeBrowser(QMainWindow):
     def loading_started(self, browser):
         """Handle page load start"""
         self.loading_tabs.add(browser)
+        
         # Ensure dark background during load
+        browser.setStyleSheet("""
+            QWebEngineView {
+                background: #212121 !important;
+            }
+        """)
         browser.page().setBackgroundColor(QColor("#212121"))
-        browser.setStyleSheet("background: #212121;")
+        
+        # Inject immediate dark mode
+        immediate_dark = """
+        (function() {
+            // Prevent white flash
+            document.documentElement.style.backgroundColor = '#212121';
+            document.documentElement.style.color = '#e0e0e0';
+            document.documentElement.style.colorScheme = 'dark';
+            
+            if (document.body) {
+                document.body.style.backgroundColor = '#212121';
+                document.body.style.color = '#e0e0e0';
+            }
+            
+            // Add style before content loads
+            const style = document.createElement('style');
+            style.textContent = `
+                html, body {
+                    background-color: #212121 !important;
+                    color: #e0e0e0 !important;
+                    transition: none !important;
+                }
+                * {
+                    color-scheme: dark !important;
+                }
+            `;
+            document.documentElement.appendChild(style);
+        })();
+        """
+        browser.page().runJavaScript(immediate_dark)
 
     def loading_progress(self, browser, progress):
         """Handle page load progress"""
@@ -1261,53 +1496,43 @@ class SledgeBrowser(QMainWindow):
         if not text:
             self.url_bar.suggestions_list.hide()
             return
-
+        
         suggestions = []
         
-        # Check for special prefixes
-        if text.startswith("tab:") or text.lower().startswith("t "):
-            # Tab search mode
-            search_text = text.split(":", 1)[1].strip() if ":" in text else text[2:].strip()
-            suggestions.extend(self.search_tabs(search_text))
-        else:
-            # Regular mode - search everything
-            # Add tab suggestions first
+        try:
+            # Get history suggestions
+            history = self.history_manager.get_history(limit=5)
+            for entry in history:
+                # Handle different history entry formats safely
+                if isinstance(entry, (list, tuple)):
+                    if len(entry) >= 2:  # As long as we have url and title
+                        url = entry[0]
+                        title = entry[1]
+                        if text.lower() in url.lower() or text.lower() in title.lower():
+                            suggestions.append(("history", title, url, f"History: {title}"))
+        except Exception as e:
+            print(f"Error getting history suggestions: {e}")
+        
+        try:
+            # Get open tab suggestions
             tab_results = self.search_tabs(text)
-            if tab_results:
-                suggestions.extend(tab_results)
-
-            # Add history suggestions
-            history = self.history_manager.get_history(limit=5, search=text)
-            for url, title, _, _ in history:
-                item = ("history", title, url, f"History: {title}")
-                if item not in suggestions:
-                    suggestions.append(item)
-
-            # Add search suggestions
-            if not any(s[2].startswith(text) for s in suggestions):
-                # Prepare different search queries
-                search_suggestions = [
-                    ("search", f"Search for: {text}", 
-                     f"https://duckduckgo.com/?q={text}", "Web Search"),
-                    ("search", f"Site search: {text}", 
-                     f"site:{self.current_tab().url().host()} {text}", "Site Search"),
-                    ("search", f"Scholar: {text}", 
-                     f"https://scholar.google.com/scholar?q={text}", "Academic Search")
-                ]
-                suggestions.extend(search_suggestions)
-
-        # Update suggestions list
-        self.url_bar.suggestions_list.clear()
-        for category, title, url, display_text in suggestions:
-            item = QListWidgetItem(display_text)
-            item.setData(Qt.ItemDataRole.UserRole, url)
-            item.setData(Qt.ItemDataRole.UserRole + 1, category)
-            # Set category property for styling
-            item.setData(Qt.ItemDataRole.UserRole + 2, category)
-            self.url_bar.suggestions_list.addItem(item)
-
-        if self.url_bar.suggestions_list.count():
-            self.url_bar.show_suggestions()
+            suggestions.extend(tab_results)
+        except Exception as e:
+            print(f"Error getting tab suggestions: {e}")
+        
+        # Show suggestions if we have any
+        if suggestions:
+            # Update suggestions list
+            self.url_bar.suggestions_list.clear()
+            for category, title, url, display_text in suggestions:
+                item = QListWidgetItem(display_text)
+                item.setData(Qt.ItemDataRole.UserRole, url)
+                item.setData(Qt.ItemDataRole.UserRole + 1, category)
+                item.setData(Qt.ItemDataRole.UserRole + 2, category)  # For styling
+                self.url_bar.suggestions_list.addItem(item)
+            
+            if self.url_bar.suggestions_list.count():
+                self.url_bar.suggestions_list.show()
         else:
             self.url_bar.suggestions_list.hide()
 
@@ -1322,7 +1547,8 @@ class SledgeBrowser(QMainWindow):
             # Check if text matches title or URL
             if (text.lower() in title.lower() or 
                 text.lower() in url.lower()):
-                group = self.tabs.tabBar.tab_groups.get(i, "")
+                # Use the tab widget's groups instead of tabBar directly
+                group = getattr(self.tabs, 'tab_groups', {}).get(i, "")
                 display_text = f"Tab: {title}"
                 if group:
                     display_text = f"Tab [{group}]: {title}"
@@ -1866,55 +2092,98 @@ class SledgeBrowser(QMainWindow):
             # Apply current style to the page
             self.style_panel._update_style()
 
+    def open_gleam_project(self, project_path, module_name="app"):
+        """Open a Gleam project in the browser"""
+        self.gleam_handler = GleamProjectHandler(project_path)
+        
+        # Build the project
+        if self.gleam_handler.build_project():
+            # Create index.html
+            self.gleam_handler.create_index_html(module_name)
+            
+            # Serve and open the project
+            url = self.gleam_handler.serve_project()
+            self.add_new_tab(QUrl(url))
+        else:
+            # Show error dialog
+            QMessageBox.critical(self, "Build Error", 
+                               "Failed to build Gleam project. Check the console for details.")
+
 class EnhancedURLBar(QLineEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setPlaceholderText("Search tabs, history, or enter address")
-        self.suggestions_list = None
-        self.setup_suggestions()
-        self.search_mode = False  # Track if we're in search mode
-        
-    def setup_suggestions(self):
-        """Create and set up suggestions list"""
-        self.suggestions_list = QListWidget(self)
-        self.suggestions_list.setWindowFlags(Qt.WindowType.Popup)
-        self.suggestions_list.setFocusProxy(self)
-        self.suggestions_list.setMouseTracking(True)
-        self.suggestions_list.itemClicked.connect(self.parent().use_suggestion)
-        self.suggestions_list.hide()
+        self.search_mode = False
+        self.editing_url = False
 
-        # Add category labels to suggestions
-        self.suggestions_list.setStyleSheet("""
-            QListWidget::item[category="tab"] { 
-                color: #88c0d0; 
-                border-left: 3px solid #88c0d0;
-            }
-            QListWidget::item[category="history"] { 
-                color: #a3be8c;
-                border-left: 3px solid #a3be8c;
-            }
-            QListWidget::item[category="search"] { 
-                color: #b48ead;
-                border-left: 3px solid #b48ead;
-            }
-        """)
+    def mousePressEvent(self, event):
+        """Handle mouse click to select text intelligently"""
+        super().mousePressEvent(event)
+        if not self.editing_url:
+            text = self.text()
+            if text.startswith(('http://', 'https://')):
+                # Select everything after the protocol
+                protocol_end = text.index('://') + 3
+                self.setSelection(protocol_end, len(text) - protocol_end)
+                self.editing_url = True
+
+    def focusInEvent(self, event):
+        """Handle focus to select text intelligently"""
+        super().focusInEvent(event)
+        text = self.text()
+        if text.startswith(('http://', 'https://')):
+            # Select everything after the protocol
+            protocol_end = text.index('://') + 3
+            self.setSelection(protocol_end, len(text) - protocol_end)
+        else:
+            # Select all for non-URLs
+            self.selectAll()
+        self.editing_url = True
+
+    def focusOutEvent(self, event):
+        """Handle focus loss"""
+        super().focusOutEvent(event)
+        self.editing_url = False
+        # Hide suggestions with delay to allow clicking them
+        QTimer.singleShot(100, self.suggestions_list.hide)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            if self.suggestions_list.isVisible():
+        """Handle key events"""
+        if self.suggestions_list.isVisible():
+            if event.key() == Qt.Key.Key_Escape:
                 self.suggestions_list.hide()
                 return
-            self.clear()
+            elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                current_item = self.suggestions_list.currentItem()
+                if current_item:
+                    self._use_suggestion(current_item)
+                    return
+        
+        # Handle Enter to navigate
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._process_input()
             return
-            
-        if event.key() == Qt.Key.Key_Tab:
-            # Quick tab switch mode
-            self.search_mode = True
-            self.setText("tab: " + self.text())
-            event.accept()
-            return
-
+                
         super().keyPressEvent(event)
+
+    def _process_input(self):
+        """Process URL input and navigate"""
+        text = self.text().strip()
+        
+        # If it looks like a search query, convert to search URL
+        if ' ' in text or not any(c in text for c in './'):
+            search_url = f"https://duckduckgo.com/?q={text}"
+            self.setText(search_url)
+        # If it looks like a URL but missing protocol, add https://
+        elif not text.startswith(('http://', 'https://')):
+            if text.startswith('//'):
+                text = 'https:' + text
+            else:
+                text = 'https://' + text
+            self.setText(text)
+            
+        # Navigate to the URL
+        self.parent().navigate_to_url()
 
 class SecurityPanel(QWidget):
     def __init__(self, settings, parent=None):

@@ -1,8 +1,9 @@
-from PyQt6.QtWidgets import QSplitter,QDialog, QColorDialog,QDialogButtonBox, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QComboBox, QLabel, QTreeWidget, QTreeWidgetItem, QScrollArea, QFrame, QWidget, QGridLayout, QFileDialog, QMenu, QMainWindow
+from PyQt6.QtWidgets import QSplitter,QDialog, QColorDialog,QDialogButtonBox, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QComboBox, QLabel, QTreeWidget, QTreeWidgetItem, QScrollArea, QFrame, QWidget, QGridLayout, QFileDialog, QMenu, QMainWindow, QSizePolicy
 from PyQt6.QtGui import QColor, QEventPoint
 from PyQt6.QtCore import Qt, QPoint, QPropertyAnimation, QSize, QEvent, QRect 
 import psutil
 from .states import TabState
+from PyQt6.QtCore import pyqtSignal
 
 class PopoutWindow(QMainWindow):
     def __init__(self, tab_widget, tab_index, parent=None):
@@ -605,190 +606,105 @@ class TabListDialog(QDialog):
         self.populate_tabs()  # Refresh the list
 
 class TabSpreadDialog(QDialog):
-    def __init__(self, tab_widget, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.tab_widget = tab_widget
-        self.init_ui()
-        
-    def init_ui(self):
         self.setWindowTitle("Tab Spread")
-        layout = QGridLayout(self)
+        self.setModal(True)
         
-        # Create tab preview widgets
-        for i in range(self.tab_widget.count()):
-            tab = self.tab_widget.widget(i)
-            preview = self.create_tab_preview(tab, i)
-            row = i // 3  # 3 columns
-            col = i % 3
-            layout.addWidget(preview, row, col)
+        # Create main layout
+        self.layout = QVBoxLayout(self)
+        
+        # Create scroll area
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.layout.addWidget(self.scroll_area)
+        
+        # Create container widget for grid
+        self.container = QWidget()
+        self.scroll_area.setWidget(self.container)
+        
+        # Create grid layout
+        self.grid_layout = QGridLayout(self.container)
+        self.grid_layout.setSpacing(10)
+        
+        # Add close button
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.close)
+        self.layout.addWidget(self.close_button)
+        
+    def populate_spread(self):
+        """Populate the spread with tab previews"""
+        # Clear existing items
+        for i in reversed(range(self.grid_layout.count())):
+            self.grid_layout.itemAt(i).widget().deleteLater()
+        
+        # Get tab widget
+        tab_widget = self.parent()
+        if not tab_widget:
+            return
             
+        # Calculate grid dimensions
+        tab_count = tab_widget.count()
+        cols = min(4, tab_count)  # Max 4 columns
+        rows = (tab_count + cols - 1) // cols  # Ceiling division
+        
+        # Add tab previews
+        for i in range(tab_count):
+            tab = tab_widget.widget(i)
+            if not tab:
+                continue
+                
+            # Create preview widget
+            preview = TabPreviewWidget(tab)
+            preview.clicked.connect(lambda idx=i: self._handle_preview_click(idx))
+            
+            # Add to grid
+            row = i // cols
+            col = i % cols
+            self.grid_layout.addWidget(preview, row, col)
+            
+    def _handle_preview_click(self, index):
+        """Handle preview click by switching to tab and closing dialog"""
+        tab_widget = self.parent()
+        if tab_widget:
+            tab_widget.setCurrentIndex(index)
+        self.close()
+
+class TabPreviewWidget(QWidget):
+    clicked = pyqtSignal()
+    
+    def __init__(self, tab, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(200, 150)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
+        layout = QVBoxLayout(self)
+        
+        # Add title label
+        title = tab.windowTitle() or "Untitled"
+        title_label = QLabel(title)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # Add preview (if available)
+        if hasattr(tab, 'grab'):
+            preview = tab.grab().scaled(180, 120, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            preview_label = QLabel()
+            preview_label.setPixmap(preview)
+            preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(preview_label)
+        
         self.setStyleSheet("""
-            QDialog {
+            QWidget {
                 background: #2e3440;
+                border-radius: 8px;
+                padding: 8px;
             }
             QLabel {
                 color: #d8dee9;
             }
         """)
-
-    def create_tab_preview(self, tab, index):
-        preview = QWidget()
-        preview_layout = QVBoxLayout(preview)
         
-        # Create clickable preview
-        preview_btn = QPushButton()
-        preview_btn.setFixedSize(300, 200)
-        preview_btn.clicked.connect(lambda: self.select_tab(index))
-        preview_layout.addWidget(preview_btn)
-        
-        # Add tab title
-        title = QLabel(self.tab_widget.tabText(index))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview_layout.addWidget(title)
-        
-        return preview
-        
-    def select_tab(self, index):
-        """Handle tab selection"""
-        self.tab_widget.setCurrentIndex(index)
-        self.accept()  # Close dialog after selection
-
-    def _setup_touch_gestures(self):
-        """Setup touch gesture recognition"""
-        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
-        self.touch_start = None
-        self.current_card = None
-    
-    def event(self, event):
-        """Handle touch events for gestures"""
-        if event.type() == QEvent.Type.TouchBegin:
-            points = event.points()
-            if points:
-                self.touch_start = points[0].position()
-                # Find card under touch point
-                pos = self.scroll.mapFrom(self, self.touch_start)
-                self.current_card = self._find_card_at(pos)
-            return True
-            
-        elif event.type() == QEvent.Type.TouchUpdate:
-            if self.touch_start and self.current_card:
-                points = event.points()
-                if points:
-                    pos = points[0].position()
-                    delta = pos - self.touch_start
-                    
-                    # Handle swipe gestures
-                    if abs(delta.x()) > 100:  # Horizontal swipe
-                        if delta.x() > 0:
-                            self._handle_swipe_right(self.current_card)
-                        else:
-                            self._handle_swipe_left(self.current_card)
-                        self.touch_start = None
-                        self.current_card = None
-            return True
-            
-        elif event.type() == QEvent.Type.TouchEnd:
-            self.touch_start = None
-            self.current_card = None
-            return True
-            
-        return super().event(event)
-    
-    def _find_card_at(self, pos):
-        """Find the tab card widget at the given position"""
-        for i in range(self.grid_layout.count()):
-            widget = self.grid_layout.itemAt(i).widget()
-            if widget and widget.geometry().contains(pos):
-                return widget
-        return None
-    
-    def _handle_swipe_right(self, card):
-        """Handle right swipe on card (e.g., add to group)"""
-        index = card.property("tab_index")
-        if index is not None:
-            # Show quick group menu
-            menu = QMenu(self)
-            for group_name in self.tab_widget.groups:
-                action = menu.addAction(group_name)
-                action.triggered.connect(
-                    lambda checked, g=group_name: self.tab_widget.addTabToGroup(index, g)
-                )
-            menu.exec(card.mapToGlobal(card.rect().center()))
-    
-    def _handle_swipe_left(self, card):
-        """Handle left swipe on card (e.g., close tab)"""
-        index = card.property("tab_index")
-        if index is not None:
-            # Animate card off screen
-            animation = QPropertyAnimation(card, b"geometry")
-            animation.setDuration(200)
-            start_geo = card.geometry()
-            end_geo = start_geo.translated(-start_geo.width(), 0)
-            animation.setStartValue(start_geo)
-            animation.setEndValue(end_geo)
-            animation.finished.connect(lambda: self.tab_widget.removeTab(index))
-            animation.start()
-    
-    def populate_spread(self, filter_text=""):
-        """Populate the grid with tab cards"""
-        # Clear existing items
-        for i in reversed(range(self.grid_layout.count())): 
-            self.grid_layout.itemAt(i).widget().setParent(None)
-        
-        row = 0
-        col = 0
-        # Responsive grid based on window width
-        width = self.width()
-        if width < 600:  # Phone
-            max_cols = 1
-        elif width < 1024:  # Tablet
-            max_cols = 2
-        else:  # Desktop
-            max_cols = max(3, self.width() // 320)
-        
-        for i in range(self.tab_widget.count()):
-            tab = self.tab_widget.widget(i)
-            title = self.tab_widget.tabText(i)
-            url = tab.url().toString() if hasattr(tab, 'url') else ""
-            
-            if filter_text.lower() in title.lower() or filter_text.lower() in url.lower():
-                preview = self.create_tab_preview(tab, i)
-                self.grid_layout.addWidget(preview, row, col)
-                
-                col += 1
-                if col >= max_cols:
-                    col = 0
-                    row += 1
-    
-    def resizeEvent(self, event):
-        """Handle window resize"""
-        super().resizeEvent(event)
-        # Reflow grid on resize
-        self.populate_spread(self.search.text())
-    
-    def filter_tabs(self):
-        """Filter tabs based on search text"""
-        self.populate_spread(self.search.text())
-    
-    def change_view(self, mode):
-        """Change view mode"""
-        if mode == "Cards":
-            self.populate_spread(self.search.text())
-        elif mode == "List":
-            # Implement list view
-            pass
-        elif mode == "Groups":
-            # Implement grouped view
-            pass
-    
-    def activate_tab(self, index):
-        """Activate selected tab with animation"""
-        self.tab_widget.setCurrentIndex(index)
-        
-        # Fade out dialog
-        fade_out = QPropertyAnimation(self, b"windowOpacity")
-        fade_out.setDuration(200)
-        fade_out.setStartValue(1.0)
-        fade_out.setEndValue(0.0)
-        fade_out.finished.connect(self.accept)
-        fade_out.start()
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()

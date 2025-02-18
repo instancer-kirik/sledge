@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QIcon
 
 from .webview import WebView
-from .style_panel import StylePanel
+from .ui.style_panel import StylePanel
 from .theme import BrowserTheme
 
 class BrowserWindow(QMainWindow):

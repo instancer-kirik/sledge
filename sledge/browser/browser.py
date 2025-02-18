@@ -14,33 +14,33 @@ from PyQt6.QtGui import QAction, QIcon, QColor
 from sledge.browser.theme import Theme
 from sledge.browser.security import RequestInterceptor
 
-class TabWidget(QTabWidget):
-    """Enhanced tab widget with tab management features"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setDocumentMode(True)
-        self.setTabsClosable(True)
-        self.setMovable(True)
-        self.setTabBarAutoHide(False)
+# class TabWidget(QTabWidget):
+#     """Enhanced tab widget with tab management features"""
+#     def __init__(self, parent=None):
+#         super().__init__(parent)
+#         self.setDocumentMode(True)
+#         self.setTabsClosable(True)
+#         self.setMovable(True)
+#         self.setTabBarAutoHide(False)
         
-        # Style the tab bar
-        self.setStyleSheet("""
-            QTabBar::tab {
-                background: #2e3440;
-                color: #d8dee9;
-                padding: 8px 20px;
-                border: none;
-                min-width: 150px;
-                max-width: 300px;
-            }
-            QTabBar::tab:selected {
-                background: #3b4252;
-                border-bottom: 2px solid #88c0d0;
-            }
-            QTabBar::tab:hover {
-                background: #434c5e;
-            }
-        """)
+#         # Style the tab bar
+#         self.setStyleSheet("""
+#             QTabBar::tab {
+#                 background: #2e3440;
+#                 color: #d8dee9;
+#                 padding: 8px 20px;
+#                 border: none;
+#                 min-width: 150px;
+#                 max-width: 300px;
+#             }
+#             QTabBar::tab:selected {
+#                 background: #3b4252;
+#                 border-bottom: 2px solid #88c0d0;
+#             }
+#             QTabBar::tab:hover {
+#                 background: #434c5e;
+#             }
+#         """)
 
 class BrowserWindow(QMainWindow):
     def __init__(self, app=None):
