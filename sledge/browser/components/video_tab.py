@@ -13,10 +13,22 @@ class VideoTab(QWidget):
         super().__init__(parent)
         self._url = url if isinstance(url, QUrl) else QUrl(url)
         self.tab_widget = parent
-        # Get the main browser window
         self.browser = parent.parent() if parent else None
         self.direct_video_url = None
+        
+        # Create layout first
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create web view with proper parent
+        self.web_view = QWebEngineView(self)
+        self.layout.addWidget(self.web_view)
+        
+        # Initialize UI after web view
         self.init_ui()
+        
+        # Setup cleanup
+        self.destroyed.connect(self._cleanup)
         
     def init_ui(self):
         """Initialize the UI components"""
@@ -45,7 +57,6 @@ class VideoTab(QWidget):
         webpage_layout.setSpacing(0)
         
         # Create web view for the original page
-        self.web_view = QWebEngineView()
         if self.browser and hasattr(self.browser, 'profile'):
             self.web_view.setPage(QWebEnginePage(self.browser.profile, self.web_view))
         webpage_layout.addWidget(self.web_view)
@@ -276,14 +287,14 @@ class VideoTab(QWidget):
             
     def _handle_video_found(self, result):
         """Handle found video URL or status"""
-        print(f"🎥 [VIDEO TAB] JavaScript search result: {result}")
-        
+      
         if not result:
             self.status_label.setText("Could not find video - please select a server and click play")
             # Keep checking for video periodically
             QTimer.singleShot(2000, lambda: self._check_for_video(True))
             return
-            
+        print(f"🎥 [VIDEO TAB] JavaScript search result: {result}")
+           
         if result == 'waiting_for_video':
             # Server/play button clicked, wait a bit and check again for video
             print("🎥 [VIDEO TAB] Waiting for video after clicking play...")
@@ -412,7 +423,7 @@ class VideoTab(QWidget):
                                     // Look for common video URL patterns
                                     const matches = text.match(/['"]?(https?:\/\/[^'"]*\.(?:mp4|m3u8|webm|flv)(?:[^'"]*))['"]?/i);
                                     if (matches) {
-                                        console.log('�� Found video URL in script:', matches[1]);
+                                        console.log('🎥 Found video URL in script:', matches[1]);
                                         return resolve(matches[1]);
                                     }
                                 }
@@ -505,3 +516,17 @@ class VideoTab(QWidget):
     def url(self):
         """Return the current URL for compatibility with tab widget"""
         return self._url 
+
+    def _cleanup(self):
+        """Handle proper cleanup of resources"""
+        if hasattr(self, 'web_view') and self.web_view:
+            self.web_view.stop()
+            if self.web_view.page():
+                self.web_view.page().deleteLater()
+            self.web_view.deleteLater()
+            self.web_view = None
+            
+    def closeEvent(self, event):
+        """Handle cleanup when tab is closed"""
+        self._cleanup()
+        super().closeEvent(event) 

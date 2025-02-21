@@ -1,13 +1,13 @@
 from PyQt6.QtCore import Qt, QPoint, QEvent, QRect, QSize, QTimer, QPointF, QUrl, QPropertyAnimation, QEasingCurve
 from PyQt6.QtWidgets import (
     QTabWidget, QWidget, QHBoxLayout, QVBoxLayout, 
-    QToolButton, QMenu, QLabel, QPushButton, QDockWidget, QDialog, QDialogButtonBox, QLineEdit, QColorDialog, QComboBox, QStackedWidget, QTabBar, QListWidget, QListWidgetItem
+    QToolButton, QMenu, QLabel, QPushButton, QDockWidget, QDialog, QDialogButtonBox, QLineEdit, QColorDialog, QComboBox, QStackedWidget, QTabBar, QListWidget, QListWidgetItem, QGridLayout, QInputDialog
 )
 from PyQt6.QtGui import QColor, QCursor, QIcon, QShortcut
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QApplication, QMainWindow
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineProfile
+from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
 
 from .states import TabState
 from .groups import TabGroup
@@ -15,6 +15,7 @@ from .memory import TabMemoryManager, TabMemoryIndicator
 from .ring_menu import RingMenu
 from .dialogs import TabListDialog, TabSpreadDialog
 from .debug import TabDebugPanel
+import os
         
         # # Set up tab bar styling and behavior first
         # self.setTabPosition(QTabWidget.TabPosition.North)
@@ -38,6 +39,47 @@ from .debug import TabDebugPanel
 class TabWidget(QTabWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        # Initialize view pool for instant tab creation
+        self.view_pool = []
+        self._warm_pool_size = 3
+        self._setup_view_pool()
+        
+        # Set up tab bar styling and behavior
+        self.setTabPosition(QTabWidget.TabPosition.North)
+        self.setDocumentMode(True)
+        self.setMovable(True)
+        self.setTabsClosable(True)
+        
+        # Create enhanced TabBar
+        self._tab_bar = TabBar(self)
+        self.setTabBar(self._tab_bar)
+        
+        # Set up modern styling
+        self.setStyleSheet("""
+            QTabWidget::pane { 
+                border: none;
+                background: #2e3440;
+            }
+            QTabBar::tab {
+                background: #2e3440;
+                color: #d8dee9;
+                padding: 8px 20px;
+                border: none;
+                min-width: 150px;
+                max-width: 300px;
+            }
+            QTabBar::tab:selected {
+                background: #3b4252;
+                color: #88c0d0;
+            }
+        """)
+        
+        # Initialize memory management
+        self.memory_manager = TabMemoryManager(self)
+        
+        # Set up fast tab switching
+        self._setup_shortcuts()
         
         # Initialize tab groups at the widget level
         self.tab_groups = {}  # Map of tab index to group name
@@ -63,16 +105,6 @@ class TabWidget(QTabWidget):
         self.preview_timer.setSingleShot(True)
         self.preview_timer.setInterval(200)  # 200ms delay
         self.preview_timer.timeout.connect(self._show_delayed_preview)
-        
-        # Set up tab bar styling and behavior first
-        self.setTabPosition(QTabWidget.TabPosition.North)
-        self.setDocumentMode(True)
-        self.setMovable(True)
-        self.setTabsClosable(True)
-        
-        # Create and set our enhanced TabBar
-        self._tab_bar = TabBar(self)
-        self.setTabBar(self._tab_bar)
         
         # Set focus policy to handle keyboard navigation
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -125,38 +157,6 @@ class TabWidget(QTabWidget):
         self._memory_timer = None
         self._memory_limit = 1024 * 1024 * 1024  # 1GB
         
-        # Set up styling
-        self.setStyleSheet("""
-            QTabWidget::pane {
-                border: none;
-                background: #2e3440;
-            }
-            QTabWidget::tab-bar {
-                alignment: left;
-            }
-            QTabBar::tab {
-                background: #2e3440;
-                color: #d8dee9;
-                padding: 8px 20px;
-                border: none;
-                min-width: 150px;
-                max-width: 300px;
-            }
-            QTabBar::tab:selected {
-                background: #3b4252;
-                color: #88c0d0;
-            }
-            QTabBar::tab:hover {
-                background: #434c5e;
-            }
-        """)
-        
-        # Initialize UI components
-        self._setup_corner_widget()
-        self._setup_memory_indicator()
-        self._setup_context_menu()
-        self.setup_group_actions()
-        
         # Setup debug panel last
         QTimer.singleShot(0, self._setup_debug_panel)
         
@@ -176,12 +176,83 @@ class TabWidget(QTabWidget):
         self.setup_preview_dropdown()
         self.tab_spread = None  # Lazy load the spread dialog
         
+        # Delay initialization of tabs until parent is ready
+        QTimer.singleShot(100, self._initialize_tabs)
+        
+    def _initialize_tabs(self):
+        """Initialize tabs after parent is ready"""
+        if self.parent() and hasattr(self.parent(), 'add_new_tab'):
+            # Create initial tab
+            self.parent().add_new_tab()
+            
+            # Create test groups if in development mode
+            if os.getenv('SLEDGE_DEV') == '1':
+                QTimer.singleShot(500, self.create_test_tabs)
+        
+    def _setup_view_pool(self):
+        """Pre-warm WebView pool for instant tab creation"""
+        while len(self.view_pool) < self._warm_pool_size:
+            view = QWebEngineView()
+            view.hide()
+            self.view_pool.append(view)
+    
+    def new_tab(self, url=None):
+        """Create new tab using pre-warmed view"""
+        if self.view_pool:
+            view = self.view_pool.pop()
+        else:
+            view = QWebEngineView()
+            
+        if url:
+            view.setUrl(QUrl(url))
+        view.show()
+        
+        index = self.addTab(view, "New Tab")
+        self.setCurrentIndex(index)
+        
+        # Replenish pool
+        QTimer.singleShot(0, self._setup_view_pool)
+        
+        return view
+
+    def _setup_shortcuts(self):
+        """Set up keyboard shortcuts for fast tab switching"""
+        shortcuts = [
+            (QKeySequence("Ctrl+Tab"), self.next_tab),
+            (QKeySequence("Ctrl+Shift+Tab"), self.prev_tab),
+            (QKeySequence("Ctrl+W"), self.close_current_tab),
+            (QKeySequence("Ctrl+T"), self.new_tab)
+        ]
+        
+        for key_seq, slot in shortcuts:
+            QShortcut(key_seq, self, activated=slot)
+
     def _setup_corner_widget(self):
         """Setup the corner widget with control buttons"""
         corner_widget = QWidget()
         corner_layout = QHBoxLayout(corner_widget)
         corner_layout.setContentsMargins(0, 0, 0, 0)
         corner_layout.setSpacing(2)
+
+        # Add port button
+        self.port_button = QToolButton(self)
+        self.port_button.setText("⚡")  # Or "🔌" or "📡"
+        self.port_button.setToolTip("Quick Port Switch")
+        self.port_button.setFixedSize(24, 24)
+        self.port_button.clicked.connect(self.show_port_dialog)
+        self.port_button.setStyleSheet("""
+            QToolButton {
+                background: #3b4252;
+                border: none;
+                border-radius: 3px;
+                color: #d8dee9;
+                font-size: 16px;
+            }
+            QToolButton:hover {
+                background: #434c5e;
+            }
+        """)
+        corner_layout.addWidget(self.port_button)
 
         # Tab management buttons with improved styling
         self.tab_list_button = QToolButton(self)
@@ -730,9 +801,11 @@ class TabWidget(QTabWidget):
         self.createGroup("Research", QColor("#98c379"))  # Green
         self.createGroup("Development", QColor("#61afef"))  # Blue
         self.createGroup("Media", QColor("#e06c75"))  # Red
+        self.createGroup("Anime", QColor("#c678dd"))  # Purple
         
-        # Add tabs one at a time and verify
+        # Add tabs one at a time
         def add_tab_to_group(url, group_name):
+            """Create and add a tab to a group"""
             # Create the tab first
             if isinstance(url, str) and any(domain in url.lower() for domain in ['wcostream', 'wcofun', 'wco.tv']):
                 # Create VideoTab for video URLs
@@ -740,16 +813,14 @@ class TabWidget(QTabWidget):
                 tab = VideoTab(url, self)
                 idx = self.addTab(tab, "Video")
             else:
-                # Create regular tab
-                idx = self.parent().add_new_tab(QUrl(url))
+                # Create regular WebEngineView tab
+                web_view = QWebEngineView()
+                web_view.setUrl(QUrl(url))
+                idx = self.addTab(web_view, "New Tab")
             
             if isinstance(idx, int) and idx >= 0:  # Verify tab was added
                 # Add to group and ensure it's tracked
                 self.addTabToGroup(idx, group_name)
-                # Make sure the URL is set in the URL bar
-                tab = self.widget(idx)
-                if hasattr(tab, 'url'):
-                    self.parent().url_bar.setText(tab.url().toString())
                 return True
             return False
 
@@ -764,21 +835,30 @@ class TabWidget(QTabWidget):
 
         # Development tabs
         dev_urls = [
-            "https://docs.python.org/3/",
-            "https://pyqt.sourceforge.io/Docs/PyQt6/",
-            "https://github.com"
+            "http://localhost:5173",  # Your dev server
+            "https://github.com/your-dev-repo",
+            "https://chat.openai.com"
         ]
         for url in dev_urls:
             add_tab_to_group(url, "Development")
 
         # Media tabs
         media_urls = [
-            "https://myanimelist.net/",
             "https://reddit.com/r/programming",
-            "https://wcofun.net"
+            "https://news.ycombinator.com",
+            "https://youtube.com"
         ]
         for url in media_urls:
             add_tab_to_group(url, "Media")
+
+        # Anime tabs
+        anime_urls = [
+            "https://myanimelist.net/",
+            "https://wcofun.net",
+            "https://wcostream.net"
+        ]
+        for url in anime_urls:
+            add_tab_to_group(url, "Anime")
 
         # Force initial collapse of all groups
         for group_name in self.groups:
@@ -786,12 +866,20 @@ class TabWidget(QTabWidget):
             # Set first tab as representative if not set
             group_tabs = sorted(self.groups[group_name].tabs)
             if group_tabs and (group_name not in self.group_representatives or 
-                             self.group_representatives[group_name] not in group_tabs):
+                              self.group_representatives[group_name] not in group_tabs):
                 self.group_representatives[group_name] = group_tabs[0]
 
         # Organize tabs and update appearances
         self._organize_tabs()
         self.update_tab_appearances()
+        
+        # Switch to the development group and expand it
+        dev_tabs = [i for i in range(self.count()) 
+                    if self.tab_groups.get(i) == "Development"]
+        if dev_tabs:
+            self.setCurrentIndex(dev_tabs[0])
+            if "Development" in self.collapsed_groups:
+                self._toggle_group("Development")
 
     def update_tab_appearances(self, index=None):
         """Update appearances of all tabs or a specific tab with improved indication"""
@@ -1389,6 +1477,55 @@ class TabWidget(QTabWidget):
             self.group_preview.setFocus()
             if self.group_preview.count() > 0:
                 self.group_preview.setCurrentRow(0)
+            
+            # Connect enter key to navigation
+            self.group_preview.itemActivated.connect(self._navigate_to_preview_tab)
+
+    def _navigate_to_preview_tab(self, item):
+        """Navigate to the selected tab from preview"""
+        tab_index = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(tab_index, int) and 0 <= tab_index < self.count():
+            self.setCurrentIndex(tab_index)
+            self.preview_container.hide()
+
+    def handle_navigation(self, direction):
+        """Handle browser navigation"""
+        current_tab = self.currentWidget()
+        if hasattr(current_tab, 'page'):
+            if direction == 'back':
+                current_tab.page().triggerAction(QWebEnginePage.WebAction.Back)
+            elif direction == 'forward':
+                current_tab.page().triggerAction(QWebEnginePage.WebAction.Forward)
+            elif direction == 'reload':
+                current_tab.page().triggerAction(QWebEnginePage.WebAction.Reload)
+
+    def next_tab(self):
+        """Switch to next tab"""
+        current = self.currentIndex()
+        if current < self.count() - 1:
+            self.setCurrentIndex(current + 1)
+        else:
+            # Wrap around to first tab
+            self.setCurrentIndex(0)
+            
+    def prev_tab(self):
+        """Switch to previous tab"""
+        current = self.currentIndex()
+        if current > 0:
+            self.setCurrentIndex(current - 1)
+        else:
+            # Wrap around to last tab
+            self.setCurrentIndex(self.count() - 1)
+            
+    def close_current_tab(self):
+        """Close the current tab"""
+        current = self.currentIndex()
+        if current >= 0:
+            self.removeTab(current)
+
+    def show_port_dialog(self):
+        dialog = PortGridDialog(self)
+        dialog.show()
 
 class TabBar(QTabBar):
     def __init__(self, parent=None):
@@ -1575,3 +1712,66 @@ class TabBar(QTabBar):
             return
             
         super().keyPressEvent(event)
+
+class PortGridDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Quick Ports")
+        self.setModal(True)
+        
+        layout = QGridLayout(self)
+        
+        # Common development ports
+        ports = [
+            ("Django", 8000),
+            ("React", 3000),
+            ("Vue", 8080),
+            ("Flask", 5000),
+            ("Node", 3001),
+            ("Webpack", 8081),
+            ("Gleam", 8002),
+            ("Custom", None)
+        ]
+        
+        # Create grid of port buttons
+        for i, (name, port) in enumerate(ports):
+            row, col = divmod(i, 3)
+            btn = QPushButton(f"{name}\n:{port}" if port else "Custom")
+            btn.setMinimumWidth(100)
+            btn.setStyleSheet("""
+                QPushButton {
+                    padding: 8px;
+                    background: #3b4252;
+                    border: none;
+                    border-radius: 4px;
+                    color: #d8dee9;
+                }
+                QPushButton:hover {
+                    background: #434c5e;
+                }
+            """)
+            if port:
+                btn.clicked.connect(lambda p=port: self.use_port(p))
+            else:
+                btn.clicked.connect(self.custom_port)
+            layout.addWidget(btn, row, col)
+
+    def use_port(self, port):
+        current_url = self.parent().url_bar.text()
+        try:
+            # Parse current URL and update port
+            url = QUrl(current_url)
+            new_url = f"{url.scheme()}://{url.host()}:{port}{url.path()}"
+            self.parent().url_bar.setText(new_url)
+            self.parent().navigate_to_url()
+        except Exception as e:
+            print(f"Error updating port: {e}")
+        self.close()
+    
+    def custom_port(self):
+        port, ok = QInputDialog.getInt(
+            self, "Custom Port", "Enter port number:", 
+            min=1, max=65535
+        )
+        if ok:
+            self.use_port(port)

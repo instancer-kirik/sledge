@@ -1,9 +1,9 @@
 from PyQt6.QtWidgets import (
     QDialog, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QCheckBox, QLineEdit, QPushButton, QComboBox,
-    QFileDialog, QGroupBox, QDialogButtonBox
+    QFileDialog, QGroupBox, QDialogButtonBox, QGridLayout
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QUrl
 from ..security import SecurityPanel
 
 class SettingsDialog(QDialog):
@@ -154,4 +154,71 @@ class SettingsDialog(QDialog):
         self.settings.set('downloads', 'default_path', self.download_path.text())
         self.settings.set('downloads', 'ask_for_location', self.ask_location.isChecked())
         
-        super().accept() 
+        super().accept()
+
+class PortGridDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Quick Ports")
+        self.setModal(True)
+        
+        layout = QGridLayout(self)
+        layout.setSpacing(4)
+        
+        # Common development ports
+        ports = [
+            ("Django", 8000),
+            ("React", 3000),
+            ("Vue", 8080),
+            ("Flask", 5000),
+            ("Node", 3001),
+            ("Webpack", 8081),
+            ("Gleam", 8002),
+            ("Custom", None)
+        ]
+        
+        # Create grid of port buttons
+        for i, (name, port) in enumerate(ports):
+            row, col = divmod(i, 3)
+            btn = QPushButton(f"{name}\n:{port}" if port else "Custom")
+            btn.setMinimumWidth(100)
+            btn.setStyleSheet("""
+                QPushButton {
+                    padding: 8px;
+                    background: #3b4252;
+                    border: none;
+                    border-radius: 4px;
+                    color: #d8dee9;
+                }
+                QPushButton:hover {
+                    background: #434c5e;
+                }
+            """)
+            if port:
+                btn.clicked.connect(lambda checked, p=port: self.use_port(p))
+            else:
+                btn.clicked.connect(self.custom_port)
+            layout.addWidget(btn, row, col)
+
+    def use_port(self, port):
+        try:
+            navbar = self.parent()
+            current_url = navbar.url_bar.text()
+            url = QUrl(current_url)
+            
+            # Default to http://localhost if no URL
+            if not url.isValid() or not url.host():
+                new_url = f"http://localhost:{port}"
+            else:
+                new_url = f"{url.scheme() or 'http'}://{url.host() or 'localhost'}:{port}{url.path()}"
+            
+            navbar.url_bar.setText(new_url)
+            if hasattr(navbar.parent(), 'navigate_to_url'):
+                navbar.parent().navigate_to_url(new_url)
+        except Exception as e:
+            print(f"Error updating port: {e}")
+        self.close()
+
+    def custom_port(self):
+        # Implement custom port functionality
+        pass 

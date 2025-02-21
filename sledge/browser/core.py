@@ -201,6 +201,9 @@ class SledgeBrowser(QMainWindow):
             # Add Gleam project support
             self.gleam_handler = None
             
+            # Store initial URL if provided
+            self.initial_url = None
+            
         except Exception as e:
             print("Fatal error during SledgeBrowser initialization:", e)
             raise
@@ -639,6 +642,14 @@ class SledgeBrowser(QMainWindow):
         self.setCentralWidget(self.tabs)
         print("🎨 [SLEDGE UI] Created TabWidget")
 
+        # Create navigation toolbar
+        nav_toolbar = QToolBar()
+        self.addToolBar(nav_toolbar)
+
+        # Create URL bar with browser as parent
+        self.url_bar = EnhancedURLBar(self)  # Set browser as parent, not toolbar
+        nav_toolbar.addWidget(self.url_bar)
+
         # Create NavBar
         print("🎨 [SLEDGE UI] Creating navbar...")
         navbar = QToolBar()
@@ -725,12 +736,6 @@ class SledgeBrowser(QMainWindow):
                 background: none;
             }
         """)
-
-        # Enhanced URL Bar
-        self.url_bar = EnhancedURLBar(self)
-        self.url_bar.returnPressed.connect(self.navigate_to_url)
-        self.url_bar.textEdited.connect(self.on_url_edit)
-        navbar.addWidget(self.url_bar)
 
         # Progress Bar
         self.progress_bar = QProgressBar()
@@ -1420,11 +1425,12 @@ class SledgeBrowser(QMainWindow):
         return self.tabs.currentWidget()
 
     def navigate_to_url(self):
-        """Navigate to URL in url bar"""
-        q = QUrl(self.url_bar.text())
-        if q.scheme() == "":
-            q.setScheme("http")
-        self.current_tab().setUrl(q)
+        """Navigate to URL in current tab"""
+        url = self.url_bar.text()
+        if url:
+            current_tab = self.tabs.currentWidget()
+            if current_tab:
+                current_tab.setUrl(QUrl(url))
 
     def update_urlbar(self, q, browser=None):
         """Update URL bar with current URL"""
@@ -2109,81 +2115,110 @@ class SledgeBrowser(QMainWindow):
             QMessageBox.critical(self, "Build Error", 
                                "Failed to build Gleam project. Check the console for details.")
 
+    def load_url(self, url):
+        """Load URL in current or new tab"""
+        if not self.tabs.count():
+            self.add_new_tab()
+        current_tab = self.tabs.currentWidget()
+        if current_tab:
+            current_tab.setUrl(QUrl(url))
+            self.url_bar.setText(url)
+
 class EnhancedURLBar(QLineEdit):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, browser):  # Take browser instance directly
+        super().__init__()
+        self.browser = browser  # Store browser reference
         self.setPlaceholderText("Search tabs, history, or enter address")
         self.search_mode = False
         self.editing_url = False
-
-    def mousePressEvent(self, event):
-        """Handle mouse click to select text intelligently"""
-        super().mousePressEvent(event)
-        if not self.editing_url:
-            text = self.text()
-            if text.startswith(('http://', 'https://')):
-                # Select everything after the protocol
-                protocol_end = text.index('://') + 3
-                self.setSelection(protocol_end, len(text) - protocol_end)
-                self.editing_url = True
-
-    def focusInEvent(self, event):
-        """Handle focus to select text intelligently"""
-        super().focusInEvent(event)
-        text = self.text()
-        if text.startswith(('http://', 'https://')):
-            # Select everything after the protocol
-            protocol_end = text.index('://') + 3
-            self.setSelection(protocol_end, len(text) - protocol_end)
-        else:
-            # Select all for non-URLs
-            self.selectAll()
-        self.editing_url = True
+        
+        # Initialize suggestions list
+        self.suggestions_list = QListWidget(self)
+        self.suggestions_list.setWindowFlags(Qt.WindowType.Popup)
+        self.suggestions_list.setFocusProxy(self)
+        self.suggestions_list.itemClicked.connect(self._use_suggestion)
+        self.suggestions_list.hide()
+        
+        # Style suggestions
+        self.suggestions_list.setStyleSheet("""
+            QListWidget {
+                background: #2e3440;
+                border: 1px solid #4c566a;
+                border-radius: 4px;
+                color: #d8dee9;
+            }
+            QListWidget::item {
+                padding: 4px;
+            }
+            QListWidget::item:selected {
+                background: #4c566a;
+            }
+        """)
 
     def focusOutEvent(self, event):
         """Handle focus loss"""
         super().focusOutEvent(event)
         self.editing_url = False
         # Hide suggestions with delay to allow clicking them
-        QTimer.singleShot(100, self.suggestions_list.hide)
+        QTimer.singleShot(100, lambda: self.suggestions_list.hide())
 
     def keyPressEvent(self, event):
         """Handle key events"""
-        if self.suggestions_list.isVisible():
-            if event.key() == Qt.Key.Key_Escape:
-                self.suggestions_list.hide()
-                return
-            elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                current_item = self.suggestions_list.currentItem()
-                if current_item:
-                    self._use_suggestion(current_item)
-                    return
-        
-        # Handle Enter to navigate
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self._process_input()
-            return
-                
+        # Let normal typing happen first
         super().keyPressEvent(event)
+        
+        # Then handle special keys
+        if event.key() == Qt.Key.Key_Escape:
+            self.suggestions_list.hide()
+        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self.suggestions_list.isVisible() and self.suggestions_list.currentItem():
+                self._use_suggestion(self.suggestions_list.currentItem())
+            else:
+                self._process_input()
 
     def _process_input(self):
         """Process URL input and navigate"""
         text = self.text().strip()
         
-        # If it looks like a search query, convert to search URL
-        if ' ' in text or not any(c in text for c in './'):
-            search_url = f"https://duckduckgo.com/?q={text}"
-            self.setText(search_url)
-        # If it looks like a URL but missing protocol, add https://
+        # Special handling for localhost during development
+        if text.startswith('localhost'):
+            if not text.startswith('http'):
+                text = 'http://' + text
+        # Regular URL processing
+        elif ' ' in text or not any(c in text for c in './'):
+            text = f"https://duckduckgo.com/?q={text}"
         elif not text.startswith(('http://', 'https://')):
-            if text.startswith('//'):
-                text = 'https:' + text
-            else:
-                text = 'https://' + text
-            self.setText(text)
+            text = 'https://' + text if not text.startswith('//') else 'https:' + text
             
-        # Navigate to the URL
-        self.parent().navigate_to_url()
+        self.setText(text)
+        self.browser.navigate_to_url()  # Use stored browser reference
+
+    def _use_suggestion(self, item):
+        """Use the selected suggestion"""
+        if hasattr(self, 'parent') and hasattr(self.parent(), 'use_suggestion'):
+            self.parent().use_suggestion(item)
+        self.suggestions_list.hide()
+
+    def showEvent(self, event):
+        """Update suggestions list position when shown"""
+        super().showEvent(event)
+        self._update_suggestions_position()
+
+    def resizeEvent(self, event):
+        """Update suggestions list position when resized"""
+        super().resizeEvent(event)
+        self._update_suggestions_position()
+
+    def _update_suggestions_position(self):
+        """Update the position of the suggestions list"""
+        if self.suggestions_list:
+            width = self.width()
+            height = 200  # Fixed height for suggestions
+            pos = self.mapToGlobal(self.rect().bottomLeft())
+            self.suggestions_list.setGeometry(
+                pos.x(), pos.y(),
+                width, height
+            )
 
 class SecurityPanel(QWidget):
     def __init__(self, settings, parent=None):

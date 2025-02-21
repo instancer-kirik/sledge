@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 import psutil
 import math
 from PyQt6.QtWebEngineCore import QWebEnginePage
+from typing import Optional
+from .webview import WebView
 
 class TabState:
     ACTIVE = "active"
@@ -526,6 +528,46 @@ class TabBar(QTabBar):
         # Show and raise
         self.group_preview.show()
         self.group_preview.raise_()
+
+class TabManager:
+    def __init__(self, parent=None):
+        self.tab_widget = QTabWidget(parent)
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.setMovable(True)
+        self.tab_widget.setDocumentMode(True)  # More modern look
+        
+        # Fast tab switching shortcuts
+        self.setup_shortcuts()
+        
+        # Pre-warm a pool of web views for instant tab creation
+        self.view_pool = []
+        self.warm_view_pool(size=3)
+    
+    def warm_view_pool(self, size: int):
+        """Pre-create web views for instant tab opening"""
+        for _ in range(size):
+            view = WebView()
+            view.hide()  # Keep hidden until needed
+            self.view_pool.append(view)
+    
+    def new_tab(self, url: Optional[str] = None) -> WebView:
+        """Create new tab instantly using pre-warmed view"""
+        if self.view_pool:
+            view = self.view_pool.pop()
+        else:
+            view = WebView()
+            
+        if url:
+            view.load(url)
+        view.show()
+        
+        index = self.tab_widget.addTab(view, "New Tab")
+        self.tab_widget.setCurrentIndex(index)
+        
+        # Start warming new view for pool
+        self.warm_view_pool(size=1)
+        
+        return view
 
 # ... rest of the file ...
 
