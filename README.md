@@ -11,14 +11,8 @@ A powerful, secure web browser built with PyQt6, featuring advanced tab manageme
 - Secure extension system with VM-based sandboxing
 - Privacy-focused defaults
 
-## Installation
+## Run
 
 ```bash
 uv run sledge
 ```
-
-## Usage
-
-```bash
-sledge
-``` 
