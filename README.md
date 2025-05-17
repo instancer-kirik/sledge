@@ -14,7 +14,7 @@ A powerful, secure web browser built with PyQt6, featuring advanced tab manageme
 ## Installation
 
 ```bash
-pip install sledge-browser
+uv run sledge
 ```
 
 ## Usage
