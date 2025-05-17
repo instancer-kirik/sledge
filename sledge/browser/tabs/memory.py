@@ -17,6 +17,7 @@ class TabMemoryManager:
         self.last_accessed = {}  # Track when tabs were last accessed
         self.frozen_tabs = set()  # Track frozen tabs
         self.memory_usage_history = []  # Track memory usage over time
+        self.hibernated_tabs = {}  # Track hibernated tabs
 
     def check_memory_usage(self):
         """Check system memory usage and manage tabs intelligently"""
@@ -174,6 +175,42 @@ class TabMemoryManager:
                 self.states[index] = TabState.SNOOZED
                 tab.page().setLifecycleState(tab.page().LifecycleState.Frozen)
                 self.tab_widget.tabBar.update_tab_appearance(index)
+
+    def remove_tab(self, index):
+        """Clean up memory management state when a tab is removed"""
+        # Remove from states
+        if index in self.states:
+            del self.states[index]
+        
+        # Remove from last accessed
+        if index in self.last_accessed:
+            del self.last_accessed[index]
+        
+        # Remove from frozen tabs
+        self.frozen_tabs.discard(index)
+        
+        # Remove from hibernated tabs
+        if index in self.hibernated_tabs:
+            del self.hibernated_tabs[index]
+        
+        # Reindex states for tabs after the removed one
+        for i in range(index + 1, self.tab_widget.count() + 1):
+            # Update states
+            if i in self.states:
+                self.states[i-1] = self.states.pop(i)
+            
+            # Update last accessed
+            if i in self.last_accessed:
+                self.last_accessed[i-1] = self.last_accessed.pop(i)
+            
+            # Update frozen tabs
+            if i in self.frozen_tabs:
+                self.frozen_tabs.remove(i)
+                self.frozen_tabs.add(i-1)
+            
+            # Update hibernated tabs
+            if i in self.hibernated_tabs:
+                self.hibernated_tabs[i-1] = self.hibernated_tabs.pop(i)
 
 class TabMemoryIndicator(QWidget):
     """Widget showing memory usage and tab states"""
