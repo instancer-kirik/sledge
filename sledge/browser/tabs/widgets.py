@@ -2,11 +2,11 @@ from PyQt6.QtWidgets import (
     QTabWidget, QWidget, QHBoxLayout, QVBoxLayout, 
     QToolButton, QMenu, QLabel, QPushButton, QDockWidget,
     QDialog, QDialogButtonBox, QLineEdit, QColorDialog,
-    QComboBox, QStackedWidget, QTabBar, QListWidget,
+    QComboBox, QStackedWidget, QTabBar, QListWidget, 
     QListWidgetItem, QGridLayout, QInputDialog, QStatusBar,
     QFrame
 )
-from PyQt6.QtGui import QColor, QCursor, QIcon
+from PyQt6.QtGui import QColor, QCursor, QIcon, QShortcut
 from PyQt6.QtCore import (
     Qt, QUrl, QTimer, QPoint, QSize, QEvent,
     QPropertyAnimation, QRect, pyqtSignal
@@ -74,6 +74,7 @@ class TabWidget(QTabWidget):
         self.frozen_tabs = set()
         self.hibernation_pending = set()  # Tabs pending hibernation
         self.restoration_pending = set()  # Tabs pending restoration
+        self.collapsed_groups = set()
         
         # Initialize selection mode variables
         self.selection_mode = False
@@ -82,15 +83,34 @@ class TabWidget(QTabWidget):
         
         # Set up preview container
         self.setup_preview_container()
+
+        # Set up the preview dropdown/group preview mechanism
+        self.setup_preview_dropdown()
         
-        # Set up status bar with breadcrumbs
+        # Set up status bar
         self.status_bar = QStatusBar(self)
         self.status_bar.setSizeGripEnabled(False)
+
+        # Create the main container for status indicators
+        self.status_container = QWidget() 
+        self.indicators_layout = QHBoxLayout(self.status_container)
+        self.indicators_layout.setContentsMargins(0, 0, 0, 0)
+        self.indicators_layout.setSpacing(5)
+
+        # Add status_container to the status_bar as a permanent widget
+        self.status_bar.addPermanentWidget(self.status_container)
+        self.status_container.hide() # Initially hidden; managed by _organize_tabs
+
+        # Set up breadcrumbs (now part of status_container)
         self.breadcrumb_container = QWidget()
         self.breadcrumb_layout = QHBoxLayout(self.breadcrumb_container)
         self.breadcrumb_layout.setContentsMargins(0, 0, 0, 0)
-        self.status_bar.addWidget(self.breadcrumb_container)
-        self.breadcrumb_container.hide()
+        self.indicators_layout.addWidget(self.breadcrumb_container)
+        self.breadcrumb_container.hide() # Initially hidden; managed by update_breadcrumbs/_organize_tabs
+
+        # Initialize and call setup methods that populate indicators_layout
+        self._setup_memory_indicator()
+        self.setup_group_actions()
         
         # Connect signals
         self.tabCloseRequested.connect(self.close_tab)
