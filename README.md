@@ -8,7 +8,7 @@ A powerful, secure web browser built with PyQt6, featuring advanced tab manageme
 - Built-in dark mode for UI and web content
 - Developer tools with web inspector
 - Header collapsing for better readability
-- Secure extension system with VM-based sandboxing
+- Secure extension system with sandboxing
 - Privacy-focused defaults
 
 ## Run
