@@ -1,18 +1,23 @@
 # Sledge Browser
 
-A powerful, secure web browser built with PyQt6, featuring advanced tab management and developer tools.
+The working browser is the Android app in `kmp/`. The PyQt desktop code remains in the tree as reference. `sledge/browser/core.py` is the previous full desktop window.
 
 ## Features
 
-- Advanced tab management with groups and hibernation
-- Built-in dark mode for UI and web content
-- Developer tools with web inspector
-- Header collapsing for better readability
-- Secure extension system with sandboxing
-- Privacy-focused defaults
+Shipped in the Android app:
 
-## Run
+- Tab groups, hibernation, and a ring menu
+- History, bookmarks, and find-in-page
+- Dark mode
+- Ad blocking
+- Inline and fullscreen video playback
+- Downloads, file uploads, and camera, microphone, and location prompts
 
-```bash
-uv run sledge
-```
+Held in `sledge/browser/core.py` for reference, and not yet in the Android app:
+
+- Codec setup and media-error handling for embedded video
+- Session save and restore
+- Workspaces
+- DevTools and element inspect
+- Settings and URL suggestions
+- Extension manager hooks

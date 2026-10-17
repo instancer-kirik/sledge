@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Minimal activity theme — Compose owns all the UI chrome.
+        We use AppCompat.NoActionBar as the base so we don't need a separate
+        material-components dependency just for the XML theme.
+    -->
+    <style name="Theme.Sledge" parent="Theme.AppCompat.NoActionBar">
+        <!-- Nord Polar Night background -->
+        <item name="android:colorBackground">#0c0c0e</item>
+        <item name="android:statusBarColor">#080808</item>
+        <item name="android:navigationBarColor">#080808</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <!-- Android 15 draws apps under the system buttons unless this is set.
+             Leaving it on hid Back, Home, and Recents behind the tab strip. -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+
+</resources>
