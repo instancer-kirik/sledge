@@ -10,11 +10,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,12 +28,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,14 +74,9 @@ fun TabBar(
     modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberScrollState()
+    val intoView = remember { BringIntoViewRequester() }
     val byId = groups.associateBy { it.id }
     val items = buildStrip(tabs, byId, currentIndex)
-
-    LaunchedEffect(currentIndex, tabs.size) {
-        delay(32)
-        val target = (currentIndex * 150).coerceAtLeast(0)
-        scrollState.animateScrollTo(target.coerceAtMost(scrollState.maxValue))
-    }
 
     Surface(color = SledgeTheme.Chrome, modifier = modifier.height(56.dp)) {
         Row(
@@ -99,6 +99,7 @@ fun TabBar(
                         tab = item.tab,
                         isActive = item.index == currentIndex,
                         groupColor = item.color,
+                        intoView = if (item.index == currentIndex) intoView else null,
                         onSelect = { onTabSelect(item.index) },
                         onClose = { onTabClose(item.index) },
                         onLongPress = { onTabLongPress(item.index) },
@@ -195,26 +196,34 @@ private fun TabChip(
     tab: Tab,
     isActive: Boolean,
     groupColor: Color?,
+    intoView: BringIntoViewRequester?,
     onSelect: () -> Unit,
     onClose: () -> Unit,
     onLongPress: () -> Unit,
 ) {
+    if (intoView != null) {
+        LaunchedEffect(tab.id) {
+            delay(32)
+            intoView.bringIntoView()
+        }
+    }
     val bg = if (isActive) SledgeTheme.Surface else Color.Transparent
     val textColor = when {
         tab.lifecycle == TabLifecycle.Hibernated -> SledgeTheme.Muted
         isActive -> SledgeTheme.Text
         else -> SledgeTheme.Dim
     }
-    val label = tab.title.ifBlank {
-        displayHost(tab.url).ifBlank { stringResource(R.string.untitled_tab) }
-    }
+    val host = displayHost(tab.url)
+    val title = tab.title.ifBlank { host.ifBlank { stringResource(R.string.untitled_tab) } }
+    val label = if (isActive) title else host.ifBlank { title }
     val mark = groupColor ?: if (isActive) SledgeTheme.Strike else Color.Transparent
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
+            .then(if (intoView != null) Modifier.bringIntoViewRequester(intoView) else Modifier)
             .height(36.dp)
-            .width(168.dp)
+            .width(if (isActive) 148.dp else 84.dp)
             .clip(SledgeTheme.Corner)
             .background(bg)
             .combinedClickable(onClick = onSelect, onLongClick = onLongPress),
@@ -271,17 +280,20 @@ private fun LifecycleDot(tab: Tab) {
 
 @Composable
 private fun OverviewButton(count: Int, onClick: () -> Unit) {
+    val label = stringResource(R.string.tab_count, count)
     Box(
         modifier = Modifier
             .height(32.dp)
+            .widthIn(min = 32.dp)
             .clip(SledgeTheme.Corner)
             .background(SledgeTheme.Surface)
+            .semantics { contentDescription = label }
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = stringResource(R.string.tab_count, count),
+            text = count.toString(),
             color = SledgeTheme.Strike,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,

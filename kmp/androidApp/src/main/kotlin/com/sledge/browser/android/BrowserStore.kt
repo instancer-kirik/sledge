@@ -83,6 +83,7 @@ class BrowserStore : HistoryManager {
         val now = System.currentTimeMillis()
         val existing = history.indexOfFirst { it.url == url }
         val id = if (existing >= 0) history[existing].id else nextHistoryId++
+        val visits = if (existing >= 0) history[existing].visitCount + 1 else 1
         if (existing >= 0) history.removeAt(existing)
         history.add(
             0,
@@ -91,6 +92,7 @@ class BrowserStore : HistoryManager {
                 url = url,
                 title = title.ifBlank { url },
                 visitedAt = now,
+                visitCount = visits,
             ),
         )
         while (history.size > 200) history.removeAt(history.lastIndex)

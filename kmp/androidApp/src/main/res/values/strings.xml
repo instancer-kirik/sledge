@@ -80,6 +80,17 @@
     <string name="download_failed">Couldn\'t download %1$s</string>
     <string name="address_blocked">Only web addresses can be opened</string>
     <string name="address_no_app">No app can open that</string>
+    <string name="lookalike_title">Check this address</string>
+    <string name="lookalike_back">Go back</string>
+    <string name="lookalike_continue">Continue anyway</string>
+    <string name="lookalike_homoglyph">Characters in this name look like %1$s.</string>
+    <string name="lookalike_homoglyph_visits">Characters in this name look like %1$s, which you have opened %2$d times.</string>
+    <string name="lookalike_mixed">This name mixes alphabets. It folds into %1$s.</string>
+    <string name="lookalike_hidden">The address contains hidden characters.</string>
+    <string name="lookalike_embedded">%1$s appears in the name, but the site is %2$s.</string>
+    <string name="lookalike_kerning">The letters run together so this looks like %1$s.</string>
+    <string name="lookalike_misspelling">This is a character or two off %1$s.</string>
+    <string name="lookalike_misspelling_visits">This is a character or two off %1$s, which you have opened %2$d times.</string>
     <string name="location_title">Location</string>
     <string name="location_message">Allow %1$s to use your location?</string>
     <string name="location_allow">Allow</string>

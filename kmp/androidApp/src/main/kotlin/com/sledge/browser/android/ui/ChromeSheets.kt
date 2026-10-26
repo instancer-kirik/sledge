@@ -13,12 +13,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -102,6 +102,7 @@ fun MemoryStatusBar(
     canSleep: Boolean,
     onSleep: () -> Unit,
     onAutoMemory: (Boolean) -> Unit,
+    onWake: (() -> Unit)? = null,
 ) {
     var rss by remember { mutableIntStateOf(TabMemory.rssMegabytes()) }
     LaunchedEffect(Unit) {
@@ -127,9 +128,7 @@ fun MemoryStatusBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(32.dp)
-            .background(SledgeTheme.Chrome)
-            .padding(start = 12.dp, end = 4.dp),
+            .padding(top = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (group != null) {
@@ -150,6 +149,18 @@ fun MemoryStatusBar(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (asleep > 0 && onWake != null) {
+            Text(
+                text = stringResource(R.string.wake_all),
+                color = SledgeTheme.Accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .clip(SledgeTheme.Corner)
+                    .clickable(onClick = onWake)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
         if (canSleep) {
             Text(
                 text = stringResource(R.string.sleep_tabs),
@@ -281,6 +292,11 @@ fun FindBar(webView: WebView?, onClose: () -> Unit) {
     }
 }
 
+private sealed interface TabListRow {
+    data class Heading(val group: TabGroup, val count: Int) : TabListRow
+    data class Entry(val index: Int, val tab: Tab, val group: TabGroup?) : TabListRow
+}
+
 @Composable
 fun TabOverviewSheet(
     desk: TabDesk,
@@ -288,21 +304,90 @@ fun TabOverviewSheet(
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
+    var folded by remember {
+        val open = desk.current?.groupId
+        mutableStateOf(desk.groups.filter { it.collapsed && it.id != open }.map { it.id }.toSet())
+    }
     val tabs = desk.tabs
     val groups = desk.groups
+    val searching = query.isNotBlank()
     val shown = tabs.mapIndexed { index, tab -> index to tab }.filter { (_, tab) ->
-        query.isBlank() ||
+        !searching ||
             tab.title.contains(query, ignoreCase = true) ||
             tab.url.contains(query, ignoreCase = true) ||
             groups.find { it.id == tab.groupId }?.name?.contains(query, ignoreCase = true) == true
     }
+    val rows = overviewRows(shown, groups, folded, searching)
+    val listState = rememberLazyListState()
+    LaunchedEffect(desk.currentIndex, rows) {
+        val position = rows.indexOfFirst { it is TabListRow.Entry && it.index == desk.currentIndex }
+        if (position >= 0) listState.animateScrollToItem(position)
+    }
 
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 20.dp)) {
-        Text(
-            text = stringResource(R.string.tabs),
-            style = MaterialTheme.typography.titleLarge,
-            color = SledgeTheme.Text,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(R.string.tabs),
+                style = MaterialTheme.typography.titleLarge,
+                color = SledgeTheme.Text,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = stringResource(R.string.tab_count, tabs.size),
+                color = SledgeTheme.Dim,
+                fontSize = 13.sp,
+            )
+        }
+        if (tabs.size > 6) {
+            SearchField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = stringResource(R.string.search_tabs),
+            )
+        }
+        if (shown.isEmpty()) {
+            Text(
+                stringResource(R.string.no_tabs_match),
+                color = SledgeTheme.Dim,
+                modifier = Modifier.padding(vertical = 24.dp),
+            )
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .height((rows.size * 40).coerceIn(40, 440).dp),
+            ) {
+                items(rows, key = { row ->
+                    when (row) {
+                        is TabListRow.Heading -> "g:${row.group.id}"
+                        is TabListRow.Entry -> row.tab.id
+                    }
+                }) { row ->
+                    when (row) {
+                        is TabListRow.Heading -> GroupHeading(
+                            group = row.group,
+                            count = row.count,
+                            folded = row.group.id in folded && !searching,
+                            onClick = {
+                                folded = if (row.group.id in folded) folded - row.group.id else folded + row.group.id
+                            },
+                        )
+                        is TabListRow.Entry -> TabLine(
+                            tab = row.tab,
+                            group = row.group,
+                            selected = row.index == desk.currentIndex,
+                            onOpen = { onSelect(row.index) },
+                            onClose = {
+                                val live = desk.tabs.indexOfFirst { it.id == row.tab.id }
+                                if (live >= 0) desk.close(live)
+                            },
+                        )
+                    }
+                }
+            }
+        }
         MemoryStatusBar(
             tabs = tabs,
             group = groups.find { it.id == desk.current?.groupId },
@@ -312,115 +397,165 @@ fun TabOverviewSheet(
                     tabs[index].lifecycle != TabLifecycle.Hibernated &&
                     groups.find { it.id == tabs[index].groupId }?.keepActive != true
             },
-            onSleep = { desk.sleepBackground() },
-            onAutoMemory = { desk.updateAutoMemory(it) },
-        )
-        SearchField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = stringResource(R.string.search_tabs),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { desk.wakeAll() }) {
-                Text(stringResource(R.string.wake_all), color = SledgeTheme.Accent)
-            }
-            TextButton(onClick = {
+            onSleep = {
                 desk.sleepBackground()
                 onDismiss()
-            }) {
-                Text(stringResource(R.string.sleep_tabs), color = SledgeTheme.Accent)
-            }
+            },
+            onAutoMemory = { desk.updateAutoMemory(it) },
+            onWake = { desk.wakeAll() },
+        )
+    }
+}
+
+private fun overviewRows(
+    shown: List<Pair<Int, Tab>>,
+    groups: List<TabGroup>,
+    folded: Set<String>,
+    searching: Boolean,
+): List<TabListRow> {
+    val byId = groups.associateBy { it.id }
+    val order = mutableListOf<String?>()
+    val buckets = linkedMapOf<String?, MutableList<Pair<Int, Tab>>>()
+    shown.forEach { pair ->
+        val key = pair.second.groupId?.takeIf { byId[it] != null }
+        if (key !in buckets) {
+            order += key
+            buckets[key] = mutableListOf()
         }
-        if (shown.isEmpty()) {
-            Text(
-                stringResource(R.string.no_tabs_match),
-                color = SledgeTheme.Dim,
-                modifier = Modifier.padding(vertical = 24.dp),
-            )
+        buckets.getValue(key) += pair
+    }
+    val rows = mutableListOf<TabListRow>()
+    order.forEach { key ->
+        val members = buckets.getValue(key)
+        val group = key?.let { byId[it] }
+        if (group != null) {
+            rows += TabListRow.Heading(group, members.size)
+            if (searching || group.id !in folded) {
+                members.forEach { (index, tab) -> rows += TabListRow.Entry(index, tab, group) }
+            }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp),
-            ) {
-                itemsIndexed(shown, key = { _, pair -> pair.second.id }) { _, pair ->
-                    val (index, tab) = pair
-                    OverviewCard(
-                        tab = tab,
-                        group = groups.find { it.id == tab.groupId },
-                        selected = index == desk.currentIndex,
-                        onOpen = { onSelect(index) },
-                        onClose = {
-                            val live = desk.tabs.indexOfFirst { it.id == tab.id }
-                            if (live >= 0) desk.close(live)
-                        },
-                    )
-                }
-            }
+            members.forEach { (index, tab) -> rows += TabListRow.Entry(index, tab, null) }
         }
+    }
+    return rows
+}
+
+@Composable
+private fun GroupHeading(group: TabGroup, count: Int, folded: Boolean, onClick: () -> Unit) {
+    val color = group.color.toComposeColor()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(36.dp)
+            .clip(SledgeTheme.Corner)
+            .background(color.copy(alpha = if (folded) 0.22f else 0.1f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(SledgeTheme.Corner)
+                .background(color),
+        )
+        Text(
+            text = group.name,
+            color = color,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp),
+        )
+        Text(
+            text = count.toString(),
+            color = color.copy(alpha = 0.85f),
+            fontSize = 12.sp,
+        )
     }
 }
 
 @Composable
-private fun OverviewCard(
+private fun TabLine(
     tab: Tab,
     group: TabGroup?,
     selected: Boolean,
     onOpen: () -> Unit,
     onClose: () -> Unit,
 ) {
-    val mark = group?.color?.toComposeColor() ?: SledgeTheme.Elevated
-    Column(
+    val host = displayHost(tab.url)
+    val title = tab.title.ifBlank { host.ifBlank { stringResource(R.string.untitled_tab) } }
+    val showHost = host.isNotEmpty() && !title.equals(host, ignoreCase = true)
+    val mark = group?.color?.toComposeColor() ?: if (selected) SledgeTheme.Strike else SledgeTheme.Elevated
+    val textColor = when {
+        tab.lifecycle == TabLifecycle.Hibernated -> SledgeTheme.Muted
+        selected -> SledgeTheme.Text
+        else -> SledgeTheme.Dim
+    }
+    val dot = when {
+        tab.lifecycle == TabLifecycle.Hibernated -> SledgeTheme.Muted
+        tab.lifecycle == TabLifecycle.Frozen -> SledgeTheme.Yellow
+        tab.isLoading -> SledgeTheme.Strike
+        else -> Color.Transparent
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
             .clip(SledgeTheme.Corner)
-            .background(if (selected) SledgeTheme.Elevated else SledgeTheme.Background)
-            .clickable(onClick = onOpen),
+            .background(if (selected) SledgeTheme.Elevated else Color.Transparent)
+            .clickable(onClick = onOpen)
+            .padding(end = 2.dp),
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
+                .padding(start = 10.dp)
+                .size(width = 3.dp, height = 14.dp)
+                .clip(SledgeTheme.Corner)
                 .background(mark),
         )
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 2.dp)) {
-            Text(
-                text = tab.title.ifBlank { stringResource(R.string.untitled_tab) },
-                color = SledgeTheme.Text,
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Default.Close, stringResource(R.string.close_tab), tint = SledgeTheme.Dim, modifier = Modifier.size(14.dp))
-            }
-        }
+        Box(
+            modifier = Modifier
+                .padding(start = 8.dp)
+                .size(6.dp)
+                .clip(SledgeTheme.Corner)
+                .background(dot),
+        )
         Text(
-            text = displayHost(tab.url).ifBlank { stringResource(R.string.untitled_tab) },
-            color = SledgeTheme.Dim,
-            fontSize = 12.sp,
+            text = title,
+            color = textColor,
+            fontSize = 14.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 10.dp, end = 10.dp),
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp),
         )
-        Text(
-            text = lifecycleLabel(tab, group),
-            color = mark,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 10.dp),
-        )
+        if (showHost) {
+            Text(
+                text = host,
+                color = SledgeTheme.Muted,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .widthIn(max = 108.dp)
+                    .padding(start = 8.dp),
+            )
+        }
+        IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
+            Icon(
+                Icons.Default.Close,
+                stringResource(R.string.close_tab),
+                tint = SledgeTheme.Dim,
+                modifier = Modifier.size(14.dp),
+            )
+        }
     }
-}
-
-@Composable
-private fun lifecycleLabel(tab: Tab, group: TabGroup?): String {
-    val state = when (tab.lifecycle) {
-        TabLifecycle.Active -> stringResource(R.string.state_live)
-        TabLifecycle.Frozen -> stringResource(R.string.state_frozen)
-        TabLifecycle.Hibernated -> stringResource(R.string.state_asleep)
-    }
-    return if (group == null) state else "${group.name}  ·  $state"
 }
 
 @Composable

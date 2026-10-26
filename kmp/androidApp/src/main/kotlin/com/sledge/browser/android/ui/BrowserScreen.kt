@@ -26,7 +26,9 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -81,6 +83,10 @@ import com.sledge.browser.android.displayUrl
 import com.sledge.browser.android.engine.BraveAdBlock
 import com.sledge.browser.android.engine.SledgeWebView
 import com.sledge.browser.android.engine.launchAddressAction
+import com.sledge.browser.security.HostWeight
+import com.sledge.browser.security.LookalikeHit
+import com.sledge.browser.security.LookalikeKind
+import com.sledge.browser.security.lookalike
 import com.sledge.browser.model.Tab
 import com.sledge.browser.model.TabLifecycle
 import kotlinx.coroutines.delay
@@ -126,6 +132,20 @@ fun BrowserScreen(
     var canBack by remember { mutableStateOf(false) }
     var canForward by remember { mutableStateOf(false) }
     val pageActions = rememberPageActions(snackbar, store)
+    val allowedLookalikes = remember { mutableSetOf<String>() }
+    var advisory by remember { mutableStateOf<Pair<LookalikeHit, () -> Unit>?>(null) }
+
+    fun visitWeights(): List<HostWeight> =
+        store.history.map { HostWeight(it.url, it.visitCount) }
+
+    fun consider(url: String, proceed: () -> Unit) {
+        val hit = lookalike(url, visitWeights())
+        if (hit == null || hit.host in allowedLookalikes) {
+            proceed()
+        } else {
+            advisory = hit to proceed
+        }
+    }
 
     fun syncNav(webView: SledgeWebView?) {
         canBack = webView?.canGoBack() == true
@@ -228,8 +248,27 @@ fun BrowserScreen(
             wv.onDownload = { url, userAgent, contentDisposition, mimeType, contentLength ->
                 pageActions.onDownload(wv, url, userAgent, contentDisposition, mimeType, contentLength)
             }
-            if (tab.url.isNotBlank()) wv.loadUrl(tab.url)
+            wv.sledgeWebViewClient.onLookalike = { url ->
+                val hit = lookalike(url, visitWeights())
+                if (hit == null || hit.host in allowedLookalikes) {
+                    false
+                } else {
+                    advisory = hit to {
+                        allowedLookalikes += hit.host
+                        wv.loadUrl(url)
+                    }
+                    true
+                }
+            }
         }
+    }
+
+    LaunchedEffect(currentTab?.id, currentTab?.lifecycle) {
+        val tab = currentTab ?: return@LaunchedEffect
+        if (tab.lifecycle == TabLifecycle.Hibernated || tab.url.isBlank()) return@LaunchedEffect
+        val view = webViewCache[tab.id] ?: return@LaunchedEffect
+        if (!view.url.isNullOrBlank()) return@LaunchedEffect
+        consider(tab.url) { view.loadUrl(tab.url) }
     }
 
     val asleep = currentTab?.lifecycle == TabLifecycle.Hibernated
@@ -263,12 +302,14 @@ fun BrowserScreen(
             is AddressInput.Open -> {
                 focusManager.clearFocus()
                 keyboard?.hide()
-                if (asleep) {
-                    val id = currentTab?.id ?: return
-                    desk.update(id, target.text, null, true)
-                    desk.wake(currentIndex)
-                } else {
-                    activeWebView?.loadUrl(target.text)
+                consider(target.text) {
+                    if (asleep) {
+                        val id = currentTab?.id ?: return@consider
+                        desk.update(id, target.text, null, true)
+                        desk.wake(currentIndex)
+                    } else {
+                        activeWebView?.loadUrl(target.text)
+                    }
                 }
             }
         }
@@ -289,22 +330,55 @@ fun BrowserScreen(
         }
         panel = null
         sheet = null
-        when {
-            newTab -> desk.open(target)
-            asleep -> {
-                val id = currentTab?.id ?: return
-                desk.update(id, target, null, true)
-                desk.wake(currentIndex)
+        consider(target) {
+            when {
+                newTab -> desk.open(target)
+                asleep -> {
+                    val id = currentTab?.id ?: return@consider
+                    desk.update(id, target, null, true)
+                    desk.wake(currentIndex)
+                }
+                else -> activeWebView?.loadUrl(target)
             }
-            else -> activeWebView?.loadUrl(target)
         }
     }
 
+    advisory?.let { (hit, proceed) ->
+        AlertDialog(
+            onDismissRequest = { advisory = null },
+            title = { Text(stringResource(R.string.lookalike_title)) },
+            text = {
+                Column {
+                    Text(hit.host, fontWeight = FontWeight.Medium)
+                    Text(
+                        lookalikeMessage(hit),
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { advisory = null }) {
+                    Text(stringResource(R.string.lookalike_back))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    allowedLookalikes += hit.host
+                    advisory = null
+                    proceed()
+                }) {
+                    Text(stringResource(R.string.lookalike_continue))
+                }
+            },
+        )
+    }
+
     BackHandler(
-        enabled = fullscreenView != null || panel != null || sheet != null || showRingMenu ||
-            showListMenu || findOpen || activeWebView?.canGoBack() == true,
+        enabled = advisory != null || fullscreenView != null || panel != null || sheet != null ||
+            showRingMenu || showListMenu || findOpen || activeWebView?.canGoBack() == true,
     ) {
         when {
+            advisory != null -> advisory = null
             fullscreenView != null -> activeWebView?.sledgeWebChromeClient?.exitFullscreen()
             findOpen -> findOpen = false
             showListMenu -> showListMenu = false
@@ -634,6 +708,33 @@ fun BrowserScreen(
                 )
                 null -> Unit
             }
+        }
+    }
+}
+
+@Composable
+private fun lookalikeMessage(hit: LookalikeHit): String {
+    val visits = hit.neighborVisits
+    return when (hit.kind) {
+        LookalikeKind.Homoglyph -> if (visits > 0) {
+            stringResource(R.string.lookalike_homoglyph_visits, hit.neighbor, visits)
+        } else {
+            stringResource(R.string.lookalike_homoglyph, hit.neighbor)
+        }
+        LookalikeKind.MixedScript -> stringResource(R.string.lookalike_mixed, hit.neighbor)
+        LookalikeKind.HiddenCharacters -> if (hit.neighbor == hit.host) {
+            stringResource(R.string.lookalike_hidden)
+        } else if (visits > 0) {
+            stringResource(R.string.lookalike_homoglyph_visits, hit.neighbor, visits)
+        } else {
+            stringResource(R.string.lookalike_homoglyph, hit.neighbor)
+        }
+        LookalikeKind.EmbeddedName -> stringResource(R.string.lookalike_embedded, hit.neighbor, hit.host)
+        LookalikeKind.Kerning -> stringResource(R.string.lookalike_kerning, hit.neighbor)
+        LookalikeKind.Misspelling -> if (visits > 0) {
+            stringResource(R.string.lookalike_misspelling_visits, hit.neighbor, visits)
+        } else {
+            stringResource(R.string.lookalike_misspelling, hit.neighbor)
         }
     }
 }

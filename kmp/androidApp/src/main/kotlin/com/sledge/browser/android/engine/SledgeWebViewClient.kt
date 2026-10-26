@@ -48,6 +48,12 @@ class SledgeWebViewClient(
     /** Called when the WebView reports a network or rendering error. */
     var onError: ((url: String?, errorCode: Int, description: String) -> Unit)? = null
 
+    /**
+     * Main-frame http(s) navigation. Return true to cancel the load so the UI can
+     * show a lookalike advisory. The continuation is [WebView.loadUrl].
+     */
+    var onLookalike: ((url: String) -> Boolean)? = null
+
     // ---------------------------------------------------------------------------------
     // OkHttpClient for ModifyHeaders fetches (lazy, one per client instance)
     // ---------------------------------------------------------------------------------
@@ -95,7 +101,11 @@ class SledgeWebViewClient(
     // ---------------------------------------------------------------------------------
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        return openExternalScheme(view, request.url)
+        if (openExternalScheme(view, request.url)) return true
+        if (!request.isForMainFrame) return false
+        val url = request.url.toString()
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return false
+        return onLookalike?.invoke(url) == true
     }
 
     override fun shouldInterceptRequest(

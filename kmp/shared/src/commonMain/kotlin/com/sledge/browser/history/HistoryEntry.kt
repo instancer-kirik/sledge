@@ -8,6 +8,7 @@ package com.sledge.browser.history
  * @property title      The page title at the time of the visit.
  * @property visitedAt  Unix epoch timestamp in milliseconds.
  * @property faviconUrl Remote URL of the page's favicon, if known.
+ * @property visitCount How many times this exact URL has finished loading.
  */
 data class HistoryEntry(
     val id: Long = 0L,
@@ -15,4 +16,5 @@ data class HistoryEntry(
     val title: String,
     val visitedAt: Long,
     val faviconUrl: String? = null,
+    val visitCount: Int = 1,
 )

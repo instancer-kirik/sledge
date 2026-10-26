@@ -44,7 +44,8 @@ class SessionFile(private val file: File) {
                     .put("id", entry.id)
                     .put("url", entry.url)
                     .put("title", entry.title)
-                    .put("visitedAt", entry.visitedAt))
+                    .put("visitedAt", entry.visitedAt)
+                    .put("visitCount", entry.visitCount))
             }
         })
         root.put("bookmarks", JSONArray().apply {
@@ -112,6 +113,7 @@ private fun JSONArray?.toHistory(): List<HistoryEntry> {
                 url = url,
                 title = item.optString("title"),
                 visitedAt = item.optLong("visitedAt"),
+                visitCount = item.optInt("visitCount", 1).coerceAtLeast(1),
             ))
         }
     }
