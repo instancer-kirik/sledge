@@ -1,4 +1,4 @@
-package com.sledge.browser.android
+package com.sledge.browser
 
 import com.sledge.browser.model.Tab
 import com.sledge.browser.model.TabGroup

@@ -1,4 +1,4 @@
-package com.sledge.browser.android
+package com.sledge.browser
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -10,11 +10,11 @@ import com.sledge.browser.model.Bookmark
 import com.sledge.browser.model.BrowserSettings
 
 /** Local start page bundled in android assets. */
-const val START_PAGE = "file:///android_asset/start.html"
+var START_PAGE: String = "about:blank"
 
 /** An http(s) URL from an external intent. Anything else is dropped. */
 fun externalWebUrl(raw: String?): String? {
-    val scheme = raw?.let { android.net.Uri.parse(it).scheme }?.lowercase() ?: return null
+    val scheme = raw?.substringBefore(':')?.takeIf { ':' in (raw ?: "") && !it.contains('/') }?.lowercase() ?: return null
     return if (scheme == "http" || scheme == "https") raw else null
 }
 
@@ -45,7 +45,7 @@ fun addressBarTarget(text: String): AddressInput {
 
 /** Hide the asset URL in the address bar. */
 fun displayUrl(url: String): String =
-    if (url.startsWith("file:///android_asset/")) "" else url
+    if (url.startsWith("file:///android_asset/") || url.endsWith("/start.html")) "" else url
 
 /** Host shown in the address pill when it is not being edited. */
 fun displayHost(url: String): String {

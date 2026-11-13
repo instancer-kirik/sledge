@@ -18,7 +18,7 @@ import kotlin.concurrent.thread
  * Brave's adblock-rust engine, the same one the desktop app reaches through
  * the Python `adblock` package. Filter lists are downloaded and cached.
  */
-class BraveAdBlock(context: Context) {
+class BraveAdBlock(context: Context) : com.sledge.browser.ui.ListBlocker {
 
     private val appContext = context.applicationContext
     private val engine = AdblockEngine.create()
@@ -27,12 +27,12 @@ class BraveAdBlock(context: Context) {
     private val stampFile = File(dir, "stamp.txt")
 
     @Volatile
-    var enabled: Boolean = true
+    override var enabled: Boolean = true
 
     @Volatile
     private var ready: Boolean = false
 
-    var status by mutableStateOf("Brave engine is loading filter lists")
+    override var status by mutableStateOf("Brave engine is loading filter lists")
         private set
 
     private val http = OkHttpClient.Builder()

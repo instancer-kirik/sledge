@@ -1,6 +1,15 @@
 package com.sledge.browser.android
 
+import com.sledge.browser.externalWebUrl
+
+import com.sledge.browser.START_PAGE
+
+import com.sledge.browser.BrowserStore
+
+import com.sledge.browser.TabDesk
+
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.os.Bundle
 import android.view.MotionEvent
@@ -14,7 +23,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.graphics.Color
 import com.sledge.browser.adblock.AdBlocker
 import com.sledge.browser.android.engine.BraveAdBlock
-import com.sledge.browser.android.ui.BrowserScreen
+import com.sledge.browser.ui.BrowserScreen
 
 private val SteelBackground = Color(0xFF0C0C0E)
 private val SteelSurface = Color(0xFF161618)
@@ -62,6 +71,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             WebView.startSafeBrowsing(applicationContext) { _ -> }
         }
@@ -82,12 +94,14 @@ class MainActivity : ComponentActivity() {
         else if (launch != null) desk.open(launch)
 
         setContent {
+            val host = rememberAndroidHost(store, adBlocker, brave)
             MaterialTheme(colorScheme = SledgeDarkColorScheme) {
                 BrowserScreen(
                     desk = desk,
                     store = store,
                     adBlocker = adBlocker,
                     brave = brave,
+                    host = host,
                 )
             }
         }

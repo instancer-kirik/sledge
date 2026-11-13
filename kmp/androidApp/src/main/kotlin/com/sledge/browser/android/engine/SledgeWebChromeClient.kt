@@ -3,6 +3,7 @@ package com.sledge.browser.android.engine
 import android.net.Uri
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
@@ -124,6 +125,9 @@ class SledgeWebChromeClient(
     /** Third argument to the geolocation callback is always `false` (do not retain). */
     var onGeolocation: ((origin: String, callback: GeolocationPermissions.Callback) -> Unit)? = null
 
+    /** JavaScript console output from the page. */
+    var onConsole: ((ConsoleMessage) -> Unit)? = null
+
     override fun onShowFileChooser(
         webView: WebView,
         filePathCallback: ValueCallback<Array<Uri>>?,
@@ -143,5 +147,11 @@ class SledgeWebChromeClient(
     ) {
         val handler = onGeolocation
         if (handler == null) callback.invoke(origin, false, false) else handler(origin, callback)
+    }
+
+    override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+        val message = consoleMessage ?: return false
+        onConsole?.invoke(message)
+        return true
     }
 }

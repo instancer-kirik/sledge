@@ -1,4 +1,4 @@
-package com.sledge.browser.android.ui
+package com.sledge.browser.ui
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween

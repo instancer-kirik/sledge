@@ -1,0 +1,80 @@
+package com.sledge.browser.desktop
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.application
+import dev.datlag.kcef.KCEF
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.sledge.browser.adblock.AdBlocker
+import com.sledge.browser.BrowserStore
+import com.sledge.browser.START_PAGE
+import com.sledge.browser.TabDesk
+import com.sledge.browser.ui.BrowserScreen
+import java.io.File
+
+fun main() {
+    val start = listOf(File("src/main/resources/start.html"), File("start.html")).firstOrNull { it.isFile }
+    if (start != null) START_PAGE = start.absoluteFile.toURI().toString()
+    DesktopEngine.prepare(File("kcef-bundle"))
+    application {
+        Window(onCloseRequest = {
+            KCEF.disposeBlocking()
+            exitApplication()
+        }, title = "sledge") {
+            val desk = remember {
+                TabDesk().also { if (it.tabs.isEmpty()) it.open(START_PAGE) }
+            }
+            val store = remember { BrowserStore() }
+            val blocker = remember { AdBlocker() }
+            val filters = remember { DesktopFilters() }
+            var ready by remember { mutableStateOf(false) }
+            var status by remember { mutableStateOf("Starting the browser engine") }
+            LaunchedEffect(Unit) {
+                withContext(Dispatchers.IO) {
+                    val bundle = File("kcef-bundle").absoluteFile
+                    val helper = File(bundle, "jcef_helper").absolutePath
+                    KCEF.init(
+                        builder = {
+                            installDir(bundle)
+                            settings {
+                                browserSubProcessPath = helper
+                                resourcesDirPath = bundle.absolutePath
+                                localesDirPath = File(bundle, "locales").absolutePath
+                                cachePath = File(bundle.parentFile, "kcef-cache").absolutePath
+                                windowlessRenderingEnabled = false
+                            }
+                            addArgs(*DesktopEngine.arguments(bundle, helper))
+                            progress {
+                                onDownloading { status = "Downloading the browser engine" }
+                                onInitialized {
+                                    DesktopEngine.client = KCEF.newClientOrNullBlocking()
+                                    ready = true
+                                }
+                            }
+                        },
+                        onError = { error -> status = error?.message ?: "browser engine failed" },
+                        onRestartRequired = { status = "Restart the desktop app to finish engine setup" },
+                    )
+                }
+            }
+            if (ready) {
+                val host = rememberDesktopHost()
+                BrowserScreen(desk, store, blocker, filters, host)
+            } else {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(status)
+                }
+            }
+        }
+    }
+}

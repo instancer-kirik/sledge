@@ -3,5 +3,8 @@
 .idea/
 build/
 local.properties
+kcef-bundle/
+kcef-cache/
+cache/
 *.iml
 **/.DS_Store

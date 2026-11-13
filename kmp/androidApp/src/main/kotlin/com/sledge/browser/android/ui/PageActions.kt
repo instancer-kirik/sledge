@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.core.content.FileProvider
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
@@ -23,9 +24,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
-import com.sledge.browser.android.BrowserStore
+import com.sledge.browser.BrowserStore
 import com.sledge.browser.android.R
-import com.sledge.browser.android.displayHost
+import com.sledge.browser.displayHost
 import com.sledge.browser.android.engine.PublicDownload
 import com.sledge.browser.android.engine.SledgeWebView
 import com.sledge.browser.android.engine.decodeDataUrl
@@ -120,6 +121,28 @@ fun rememberPageActions(snackbar: SnackbarHostState, store: BrowserStore): PageA
     val openMultiple = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         finishFile(if (uris.isEmpty()) null else uris.toTypedArray())
     }
+    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val callback = pending.file
+        val uri = pending.cameraUri
+        pending.dialogOpen = false
+        pending.file = null
+        pending.cameraUri = null
+        callback?.onReceiveValue(if (ok && uri != null) arrayOf(uri) else null)
+    }
+    val cameraPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val uri = pending.cameraUri
+        if (granted && uri != null) {
+            takePicture.launch(uri)
+        } else {
+            val callback = pending.file
+            pending.dialogOpen = false
+            pending.file = null
+            pending.cameraUri = null
+            callback?.onReceiveValue(null)
+        }
+    }
     val mediaPermissions = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
@@ -177,7 +200,15 @@ fun rememberPageActions(snackbar: SnackbarHostState, store: BrowserStore): PageA
         createDocument.launch(filename)
     }
 
-    return remember(getContent, openMultiple, mediaPermissions, locationPermissions, createDocument) {
+    return remember(
+        getContent,
+        openMultiple,
+        mediaPermissions,
+        cameraPermission,
+        takePicture,
+        locationPermissions,
+        createDocument,
+    ) {
         PageActions(
             onShowFileChooser = { callback, params ->
                 if (callback == null) return@PageActions false
@@ -187,6 +218,16 @@ fun rememberPageActions(snackbar: SnackbarHostState, store: BrowserStore): PageA
                 }
                 pending.dialogOpen = true
                 pending.file = callback
+                if (params?.isCaptureEnabled == true) {
+                    val uri = cameraCaptureUri(context)
+                    pending.cameraUri = uri
+                    val granted = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.CAMERA,
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (granted) takePicture.launch(uri) else cameraPermission.launch(Manifest.permission.CAMERA)
+                    return@PageActions true
+                }
                 val mime = params.acceptMime()
                 if (params?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
                     openMultiple.launch(arrayOf(mime))
@@ -307,6 +348,7 @@ private class PendingPageRequests {
     var transferOpen: Boolean = false
     var file: ValueCallback<Array<Uri>>? = null
     var permission: PermissionRequest? = null
+    var cameraUri: Uri? = null
     var priorGrants: Set<String> = emptySet()
     var geoOrigin: String? = null
     var geoCallback: GeolocationPermissions.Callback? = null
@@ -314,6 +356,12 @@ private class PendingPageRequests {
 }
 
 private class PendingSave(val filename: String, val bytes: ByteArray?, val file: File?)
+
+private fun cameraCaptureUri(context: Context): Uri {
+    val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+    val file = File(dir, "scan-${System.nanoTime()}.jpg")
+    return FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+}
 
 private fun cacheDownload(context: Context): File {
     val dir = File(context.cacheDir, "downloads").apply { mkdirs() }

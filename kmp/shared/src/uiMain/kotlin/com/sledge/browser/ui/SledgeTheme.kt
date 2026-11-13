@@ -1,4 +1,4 @@
-package com.sledge.browser.android.ui
+package com.sledge.browser.ui
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color

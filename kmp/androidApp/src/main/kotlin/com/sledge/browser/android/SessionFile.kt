@@ -1,5 +1,9 @@
 package com.sledge.browser.android
 
+import com.sledge.browser.BrowserStore
+
+import com.sledge.browser.TabDesk
+
 import com.sledge.browser.history.HistoryEntry
 import com.sledge.browser.model.Bookmark
 import com.sledge.browser.model.BrowserSettings
@@ -63,7 +67,8 @@ class SessionFile(private val file: File) {
             .put("blockDangerousPorts", store.settings.blockDangerousPorts)
             .put("popupsOpenNewTab", store.settings.popupsOpenNewTab)
             .put("javascriptEnabled", store.settings.javascriptEnabled)
-            .put("darkMode", store.settings.darkMode))
+            .put("darkMode", store.settings.darkMode)
+            .put("shareEndpoint", store.settings.shareEndpoint))
         root.put("groups", JSONArray().apply {
             desk.groups.forEach { group ->
                 put(JSONObject()
@@ -145,6 +150,7 @@ private fun JSONObject?.toSettings(current: BrowserSettings): BrowserSettings {
         popupsOpenNewTab = optBoolean("popupsOpenNewTab", current.popupsOpenNewTab),
         javascriptEnabled = optBoolean("javascriptEnabled", current.javascriptEnabled),
         darkMode = optBoolean("darkMode", current.darkMode),
+        shareEndpoint = optString("shareEndpoint", current.shareEndpoint),
     )
 }
 

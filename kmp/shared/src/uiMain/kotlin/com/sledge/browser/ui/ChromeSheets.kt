@@ -1,6 +1,7 @@
-package com.sledge.browser.android.ui
+package com.sledge.browser.ui
 
-import android.webkit.WebView
+import com.sledge.browser.Strings
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,26 +37,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.res.stringArrayResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sledge.browser.android.R
-import com.sledge.browser.android.TabDesk
-import com.sledge.browser.android.TabMemory
-import com.sledge.browser.android.displayHost
+import com.sledge.browser.TabDesk
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.sledge.browser.TabMemory
+import com.sledge.browser.displayHost
 import com.sledge.browser.model.Tab
 import com.sledge.browser.model.TabGroup
 import com.sledge.browser.model.TabLifecycle
@@ -151,7 +156,7 @@ fun MemoryStatusBar(
         )
         if (asleep > 0 && onWake != null) {
             Text(
-                text = stringResource(R.string.wake_all),
+                text = Strings.wake_all,
                 color = SledgeTheme.Accent,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
@@ -163,7 +168,7 @@ fun MemoryStatusBar(
         }
         if (canSleep) {
             Text(
-                text = stringResource(R.string.sleep_tabs),
+                text = Strings.sleep_tabs,
                 color = SledgeTheme.Accent,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
@@ -174,7 +179,7 @@ fun MemoryStatusBar(
             )
         }
         Text(
-            text = stringResource(R.string.auto_memory),
+            text = Strings.auto_memory,
             color = if (autoMemory) SledgeTheme.Background else SledgeTheme.Dim,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
@@ -199,14 +204,14 @@ fun SleepingTab(tab: Tab, onWake: () -> Unit, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = stringResource(R.string.tab_asleep),
+            text = Strings.tab_asleep,
             color = SledgeTheme.Accent,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             letterSpacing = 1.2.sp,
         )
         Text(
-            text = tab.title.ifBlank { stringResource(R.string.untitled_tab) },
+            text = tab.title.ifBlank { Strings.untitled_tab },
             color = SledgeTheme.Text,
             fontSize = 20.sp,
             fontWeight = FontWeight.Medium,
@@ -224,7 +229,7 @@ fun SleepingTab(tab: Tab, onWake: () -> Unit, modifier: Modifier = Modifier) {
             )
         }
         TextButton(onClick = onWake, modifier = Modifier.padding(top = 16.dp)) {
-            Text(stringResource(R.string.wake_tab), color = SledgeTheme.Background, modifier = Modifier
+            Text(Strings.wake_tab, color = SledgeTheme.Background, modifier = Modifier
                 .clip(SledgeTheme.Corner)
                 .background(SledgeTheme.Accent)
                 .padding(horizontal = 22.dp, vertical = 8.dp))
@@ -233,7 +238,7 @@ fun SleepingTab(tab: Tab, onWake: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun FindBar(webView: WebView?, onClose: () -> Unit) {
+fun FindBar(webView: BrowserPage?, onClose: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
 
@@ -271,7 +276,7 @@ fun FindBar(webView: WebView?, onClose: () -> Unit) {
             decorationBox = { inner ->
                 Box(contentAlignment = Alignment.CenterStart) {
                     if (query.isEmpty()) {
-                        Text(stringResource(R.string.find_in_page), color = SledgeTheme.Muted, fontSize = 15.sp)
+                        Text(Strings.find_in_page, color = SledgeTheme.Muted, fontSize = 15.sp)
                     }
                     inner()
                 }
@@ -281,16 +286,158 @@ fun FindBar(webView: WebView?, onClose: () -> Unit) {
             Text(label, color = SledgeTheme.Dim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp))
         }
         IconButton(onClick = { webView?.findNext(false) }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.find_previous), tint = SledgeTheme.Dim)
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, Strings.find_previous, tint = SledgeTheme.Dim)
         }
         IconButton(onClick = { webView?.findNext(true) }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, stringResource(R.string.find_next), tint = SledgeTheme.Dim)
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, Strings.find_next, tint = SledgeTheme.Dim)
         }
         IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.Close, stringResource(R.string.close_find), tint = SledgeTheme.Dim)
+            Icon(Icons.Default.Close, Strings.close_find, tint = SledgeTheme.Dim)
         }
     }
 }
+
+@Composable
+fun ConsolePanel(
+    lines: List<ConsoleLine>,
+    endpoint: String,
+    onEndpointChange: (String) -> Unit,
+    onClear: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var selected by remember { mutableStateOf(setOf<Int>()) }
+    var status by remember { mutableStateOf(Strings.console_select) }
+    var posting by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(300.dp)
+            .background(SledgeTheme.Chrome),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                Strings.console,
+                color = SledgeTheme.Text,
+                fontSize = 13.sp,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = {
+                val text = chosenLines(lines, selected).asShareText()
+                if (text.isBlank()) {
+                    status = Strings.console_select
+                } else {
+                    clipboard.setText(AnnotatedString(text))
+                    status = "Copied ${chosenLines(lines, selected).size}"
+                }
+            }) {
+                Text(Strings.copy_console, color = SledgeTheme.Dim, fontSize = 13.sp)
+            }
+            TextButton(onClick = onClear) {
+                Text(Strings.clear_console, color = SledgeTheme.Dim, fontSize = 13.sp)
+            }
+            IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.Close, Strings.close_find, tint = SledgeTheme.Dim)
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicTextField(
+                value = endpoint,
+                onValueChange = onEndpointChange,
+                singleLine = true,
+                textStyle = TextStyle(color = SledgeTheme.Text, fontSize = 12.sp),
+                cursorBrush = SolidColor(SledgeTheme.Strike),
+                modifier = Modifier
+                    .weight(1f)
+                    .background(SledgeTheme.Surface)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                decorationBox = { inner ->
+                    if (endpoint.isEmpty()) {
+                        Text(Strings.share_endpoint, color = SledgeTheme.Muted, fontSize = 12.sp)
+                    }
+                    inner()
+                },
+            )
+            TextButton(
+                onClick = {
+                    val text = chosenLines(lines, selected).asShareText()
+                    if (text.isBlank()) {
+                        status = Strings.console_select
+                        return@TextButton
+                    }
+                    if (posting) return@TextButton
+                    posting = true
+                    status = "Posting…"
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            try {
+                                postConsole(endpoint, text)
+                            } catch (error: Exception) {
+                                error.message ?: "Post failed"
+                            }
+                        }
+                        posting = false
+                        status = result
+                    }
+                },
+                enabled = !posting,
+            ) {
+                Text(Strings.post_console, color = SledgeTheme.Strike, fontSize = 13.sp)
+            }
+        }
+        Text(
+            status,
+            color = SledgeTheme.Muted,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+        if (lines.isEmpty()) {
+            Text(
+                Strings.console_empty,
+                color = SledgeTheme.Muted,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                items(lines.size) { index ->
+                    val entry = lines[index]
+                    val color = when (entry.level) {
+                        ConsoleLevel.Error -> SledgeTheme.Red
+                        ConsoleLevel.Warn -> SledgeTheme.Yellow
+                        ConsoleLevel.Info -> SledgeTheme.Dim
+                        ConsoleLevel.Log -> SledgeTheme.Text
+                    }
+                    val where = if (entry.source.isBlank()) "" else "  ${entry.source}:${entry.line}"
+                    Text(
+                        text = entry.message + where,
+                        color = color,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        style = TextStyle(lineHeight = 16.sp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(if (index in selected) SledgeTheme.Elevated else Color.Transparent)
+                            .clickable {
+                                selected = if (index in selected) selected - index else selected + index
+                            }
+                            .padding(horizontal = 12.dp, vertical = 3.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun chosenLines(lines: List<ConsoleLine>, selected: Set<Int>): List<ConsoleLine> =
+    lines.filterIndexed { index, _ -> index in selected }
 
 private sealed interface TabListRow {
     data class Heading(val group: TabGroup, val count: Int) : TabListRow
@@ -327,13 +474,13 @@ fun TabOverviewSheet(
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = stringResource(R.string.tabs),
+                text = Strings.tabs,
                 style = MaterialTheme.typography.titleLarge,
                 color = SledgeTheme.Text,
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = stringResource(R.string.tab_count, tabs.size),
+                text = Strings.tab_count( tabs.size),
                 color = SledgeTheme.Dim,
                 fontSize = 13.sp,
             )
@@ -342,12 +489,12 @@ fun TabOverviewSheet(
             SearchField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = stringResource(R.string.search_tabs),
+                placeholder = Strings.search_tabs,
             )
         }
         if (shown.isEmpty()) {
             Text(
-                stringResource(R.string.no_tabs_match),
+                Strings.no_tabs_match,
                 color = SledgeTheme.Dim,
                 modifier = Modifier.padding(vertical = 24.dp),
             )
@@ -487,7 +634,7 @@ private fun TabLine(
     onClose: () -> Unit,
 ) {
     val host = displayHost(tab.url)
-    val title = tab.title.ifBlank { host.ifBlank { stringResource(R.string.untitled_tab) } }
+    val title = tab.title.ifBlank { host.ifBlank { Strings.untitled_tab } }
     val showHost = host.isNotEmpty() && !title.equals(host, ignoreCase = true)
     val mark = group?.color?.toComposeColor() ?: if (selected) SledgeTheme.Strike else SledgeTheme.Elevated
     val textColor = when {
@@ -550,7 +697,7 @@ private fun TabLine(
         IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
             Icon(
                 Icons.Default.Close,
-                stringResource(R.string.close_tab),
+                Strings.close_tab,
                 tint = SledgeTheme.Dim,
                 modifier = Modifier.size(14.dp),
             )
@@ -567,19 +714,19 @@ fun DevPortsSheet(
     var custom by remember { mutableStateOf("") }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
         Text(
-            text = stringResource(R.string.dev_ports),
+            text = Strings.dev_ports,
             style = MaterialTheme.typography.titleLarge,
             color = SledgeTheme.Text,
         )
         Text(
-            text = stringResource(R.string.dev_ports_summary),
+            text = Strings.dev_ports_summary,
             color = SledgeTheme.Dim,
             fontSize = 13.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
         SettingToggle(
-            title = stringResource(R.string.open_in_new_tab),
-            summary = stringResource(R.string.open_in_new_tab_summary),
+            title = Strings.open_in_new_tab,
+            summary = Strings.open_in_new_tab_summary,
             checked = newTab,
             onCheckedChange = { newTab = it },
         )
@@ -621,7 +768,7 @@ fun DevPortsSheet(
                 decorationBox = { inner ->
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                         if (custom.isEmpty()) {
-                            Text(stringResource(R.string.custom_port), color = SledgeTheme.Muted, fontSize = 15.sp)
+                            Text(Strings.custom_port, color = SledgeTheme.Muted, fontSize = 15.sp)
                         }
                         inner()
                     }
@@ -635,7 +782,7 @@ fun DevPortsSheet(
                 },
                 modifier = Modifier.padding(start = 8.dp),
             ) {
-                Text(stringResource(R.string.open_port), color = SledgeTheme.Accent)
+                Text(Strings.open_port, color = SledgeTheme.Accent)
             }
         }
     }
@@ -662,11 +809,11 @@ fun TabActionsSheet(desk: TabDesk, index: Int, onDismiss: () -> Unit) {
     var naming by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var color by remember { mutableStateOf(SledgeTheme.groupColors.first()) }
-    val suggestions = stringArrayResource(R.array.group_suggestions)
+    val suggestions = Strings.group_suggestions
 
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
         Text(
-            text = tab.title.ifBlank { stringResource(R.string.untitled_tab) },
+            text = tab.title.ifBlank { Strings.untitled_tab },
             color = SledgeTheme.Text,
             style = MaterialTheme.typography.titleLarge,
             maxLines = 1,
@@ -679,18 +826,18 @@ fun TabActionsSheet(desk: TabDesk, index: Int, onDismiss: () -> Unit) {
             modifier = Modifier.padding(top = 2.dp, bottom = 12.dp),
         )
         if (tab.lifecycle == TabLifecycle.Hibernated) {
-            ActionRow(stringResource(R.string.wake_tab)) {
+            ActionRow(Strings.wake_tab) {
                 desk.wake(index)
                 onDismiss()
             }
         } else {
-            ActionRow(stringResource(R.string.sleep_this_tab)) {
+            ActionRow(Strings.sleep_this_tab) {
                 desk.hibernate(index)
                 onDismiss()
             }
         }
         Text(
-            text = stringResource(R.string.group),
+            text = Strings.group,
             color = SledgeTheme.Dim,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
@@ -709,7 +856,7 @@ fun TabActionsSheet(desk: TabDesk, index: Int, onDismiss: () -> Unit) {
                 )
             }
             GroupPick(
-                label = stringResource(R.string.new_group),
+                label = Strings.new_group,
                 color = SledgeTheme.Accent,
                 selected = naming,
                 onClick = { naming = !naming },
@@ -720,7 +867,7 @@ fun TabActionsSheet(desk: TabDesk, index: Int, onDismiss: () -> Unit) {
                 desk.assignGroup(index, null)
                 onDismiss()
             }) {
-                Text(stringResource(R.string.remove_from_group), color = SledgeTheme.Dim)
+                Text(Strings.remove_from_group, color = SledgeTheme.Dim)
             }
         }
         if (naming) {
@@ -740,7 +887,7 @@ fun TabActionsSheet(desk: TabDesk, index: Int, onDismiss: () -> Unit) {
                 decorationBox = { inner ->
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                         if (name.isEmpty()) {
-                            Text(stringResource(R.string.group_name), color = SledgeTheme.Muted, fontSize = 15.sp)
+                            Text(Strings.group_name, color = SledgeTheme.Muted, fontSize = 15.sp)
                         }
                         inner()
                     }
@@ -786,10 +933,10 @@ fun TabActionsSheet(desk: TabDesk, index: Int, onDismiss: () -> Unit) {
                 desk.createGroup(name, color, index)
                 onDismiss()
             }) {
-                Text(stringResource(R.string.create_group), color = SledgeTheme.Accent)
+                Text(Strings.create_group, color = SledgeTheme.Accent)
             }
         }
-        ActionRow(stringResource(R.string.close_tab)) {
+        ActionRow(Strings.close_tab) {
             desk.close(index)
             onDismiss()
         }
@@ -823,7 +970,7 @@ fun GroupActionsSheet(desk: TabDesk, groupId: String, onDismiss: () -> Unit) {
             },
         )
         TextButton(onClick = { desk.renameGroup(groupId, name) }) {
-            Text(stringResource(R.string.rename_group), color = SledgeTheme.Accent)
+            Text(Strings.rename_group, color = SledgeTheme.Accent)
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
             SledgeTheme.groupColors.forEach { swatch ->
@@ -841,16 +988,16 @@ fun GroupActionsSheet(desk: TabDesk, groupId: String, onDismiss: () -> Unit) {
             }
         }
         SettingToggle(
-            title = stringResource(R.string.keep_awake),
-            summary = stringResource(R.string.keep_awake_summary),
+            title = Strings.keep_awake,
+            summary = Strings.keep_awake_summary,
             checked = group.keepActive,
             onCheckedChange = { desk.toggleKeepActive(groupId, it) },
         )
-        ActionRow(stringResource(if (group.collapsed) R.string.expand_group else R.string.collapse_group)) {
+        ActionRow(if (group.collapsed) Strings.expand_group else Strings.collapse_group) {
             desk.toggleCollapsed(groupId)
             onDismiss()
         }
-        ActionRow(stringResource(R.string.dissolve_group)) {
+        ActionRow(Strings.dissolve_group) {
             desk.dissolveGroup(groupId)
             onDismiss()
         }

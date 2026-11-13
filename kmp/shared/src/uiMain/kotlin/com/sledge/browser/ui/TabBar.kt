@@ -1,4 +1,6 @@
-package com.sledge.browser.android.ui
+package com.sledge.browser.ui
+
+import com.sledge.browser.Strings
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -34,15 +36,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sledge.browser.android.R
-import com.sledge.browser.android.displayHost
+import com.sledge.browser.displayHost
 import com.sledge.browser.model.Tab
 import com.sledge.browser.model.TabGroup
 import com.sledge.browser.model.TabLifecycle
@@ -116,7 +116,7 @@ fun TabBar(
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = stringResource(R.string.add_tab),
+                    contentDescription = Strings.add_tab,
                     tint = SledgeTheme.Accent,
                     modifier = Modifier.size(18.dp),
                 )
@@ -214,7 +214,7 @@ private fun TabChip(
         else -> SledgeTheme.Dim
     }
     val host = displayHost(tab.url)
-    val title = tab.title.ifBlank { host.ifBlank { stringResource(R.string.untitled_tab) } }
+    val title = tab.title.ifBlank { host.ifBlank { Strings.untitled_tab } }
     val label = if (isActive) title else host.ifBlank { title }
     val mark = groupColor ?: if (isActive) SledgeTheme.Strike else Color.Transparent
 
@@ -250,7 +250,7 @@ private fun TabChip(
             IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = stringResource(R.string.close_tab),
+                    contentDescription = Strings.close_tab,
                     tint = SledgeTheme.Dim,
                     modifier = Modifier.size(14.dp),
                 )
@@ -280,7 +280,7 @@ private fun LifecycleDot(tab: Tab) {
 
 @Composable
 private fun OverviewButton(count: Int, onClick: () -> Unit) {
-    val label = stringResource(R.string.tab_count, count)
+    val label = Strings.tab_count( count)
     Box(
         modifier = Modifier
             .height(32.dp)

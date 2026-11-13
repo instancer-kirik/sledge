@@ -35,6 +35,12 @@ data class BrowserSettings(
     val darkMode: Boolean = true,
 
     /**
+     * Where the console posts selected lines. Empty until the user types a full
+     * http or https URL. This is separate from page loads.
+     */
+    val shareEndpoint: String = "",
+
+    /**
      * Override the browser's default `User-Agent` header.
      * `null` means the engine's default UA is used.
      */

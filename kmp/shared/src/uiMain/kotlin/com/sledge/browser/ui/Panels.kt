@@ -1,4 +1,6 @@
-package com.sledge.browser.android.ui
+package com.sledge.browser.ui
+
+import com.sledge.browser.Strings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -27,10 +29,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.sledge.browser.android.R
 import com.sledge.browser.history.HistoryEntry
 import com.sledge.browser.model.Bookmark
 import com.sledge.browser.model.BrowserSettings
@@ -66,25 +66,25 @@ fun HistoryPanel(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = stringResource(R.string.history),
+                text = Strings.history,
                 style = MaterialTheme.typography.titleLarge,
                 color = NordText,
                 modifier = Modifier.weight(1f),
             )
             if (entries.isNotEmpty()) {
                 TextButton(onClick = onClear) {
-                    Text(stringResource(R.string.clear_history), color = NordAccent)
+                    Text(Strings.clear_history, color = NordAccent)
                 }
             }
         }
         SearchField(
             value = query,
             onValueChange = { query = it },
-            placeholder = stringResource(R.string.search_history),
+            placeholder = Strings.search_history,
         )
         if (shown.isEmpty()) {
             Text(
-                text = stringResource(R.string.no_history),
+                text = Strings.no_history,
                 color = NordMuted,
                 modifier = Modifier.padding(vertical = 28.dp),
             )
@@ -127,7 +127,7 @@ fun BookmarksPanel(
             .padding(bottom = 24.dp),
     ) {
         Text(
-            text = stringResource(R.string.bookmarks),
+            text = Strings.bookmarks,
             style = MaterialTheme.typography.titleLarge,
             color = NordText,
             modifier = Modifier.padding(bottom = 8.dp),
@@ -135,11 +135,11 @@ fun BookmarksPanel(
         SearchField(
             value = query,
             onValueChange = { query = it },
-            placeholder = stringResource(R.string.search_bookmarks),
+            placeholder = Strings.search_bookmarks,
         )
         if (shown.isEmpty()) {
             Text(
-                text = stringResource(R.string.no_bookmarks),
+                text = Strings.no_bookmarks,
                 color = NordMuted,
                 modifier = Modifier.padding(vertical = 28.dp),
             )
@@ -174,45 +174,45 @@ fun SettingsPanel(
             .padding(bottom = 28.dp),
     ) {
         Text(
-            text = stringResource(R.string.settings),
+            text = Strings.settings,
             style = MaterialTheme.typography.titleLarge,
             color = NordText,
             modifier = Modifier.padding(bottom = 8.dp),
         )
         SettingToggle(
-            title = stringResource(R.string.block_ads),
-            summary = stringResource(R.string.block_ads_summary, status),
+            title = Strings.block_ads,
+            summary = Strings.block_ads_summary( status),
             checked = settings.blockAds,
             onCheckedChange = { onChange(settings.copy(blockAds = it)) },
         )
         SettingToggle(
-            title = stringResource(R.string.javascript),
-            summary = stringResource(R.string.javascript_summary),
+            title = Strings.javascript,
+            summary = Strings.javascript_summary,
             checked = settings.javascriptEnabled,
             onCheckedChange = { onChange(settings.copy(javascriptEnabled = it)) },
         )
         SettingToggle(
-            title = stringResource(R.string.dark_mode),
-            summary = stringResource(R.string.dark_mode_summary),
+            title = Strings.dark_mode,
+            summary = Strings.dark_mode_summary,
             checked = settings.darkMode,
             onCheckedChange = { onChange(settings.copy(darkMode = it)) },
         )
         SettingToggle(
-            title = stringResource(R.string.mixed_content),
-            summary = stringResource(R.string.mixed_content_summary),
+            title = Strings.mixed_content,
+            summary = Strings.mixed_content_summary,
             checked = settings.blockMixedContent,
             onCheckedChange = { onChange(settings.copy(blockMixedContent = it)) },
         )
         SettingToggle(
-            title = stringResource(R.string.dangerous_ports),
-            summary = stringResource(R.string.dangerous_ports_summary),
+            title = Strings.dangerous_ports,
+            summary = Strings.dangerous_ports_summary,
             checked = settings.blockDangerousPorts,
             onCheckedChange = { onChange(settings.copy(blockDangerousPorts = it)) },
         )
         if (locationSites > 0) {
             SettingToggle(
-                title = stringResource(R.string.location_sites),
-                summary = stringResource(R.string.location_sites_summary, locationSites),
+                title = Strings.location_sites,
+                summary = Strings.location_sites_summary( locationSites),
                 checked = true,
                 onCheckedChange = { onClearLocations() },
             )
@@ -281,7 +281,7 @@ private fun PageRow(
         IconButton(onClick = onRemove) {
             Icon(
                 imageVector = if (meta != null) Icons.Default.Delete else Icons.Default.Close,
-                contentDescription = stringResource(R.string.delete),
+                contentDescription = Strings.delete,
                 tint = NordMuted,
             )
         }

@@ -1,7 +1,7 @@
-package com.sledge.browser.android.ui
+package com.sledge.browser.ui
 
-import android.view.ViewGroup
-import androidx.activity.compose.BackHandler
+import com.sledge.browser.Strings
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,9 +46,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -59,30 +59,22 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.sledge.browser.adblock.AdBlocker
-import com.sledge.browser.android.AddressInput
-import com.sledge.browser.android.BrowserStore
-import com.sledge.browser.android.addressBarTarget
-import com.sledge.browser.android.MainActivity
-import com.sledge.browser.android.R
-import com.sledge.browser.android.START_PAGE
-import com.sledge.browser.android.TabDesk
-import com.sledge.browser.android.displayHost
-import com.sledge.browser.android.displayUrl
-import com.sledge.browser.android.engine.BraveAdBlock
-import com.sledge.browser.android.engine.SledgeWebView
-import com.sledge.browser.android.engine.launchAddressAction
+import com.sledge.browser.AddressInput
+import com.sledge.browser.BrowserStore
+import com.sledge.browser.addressBarTarget
+import com.sledge.browser.START_PAGE
+import com.sledge.browser.TabDesk
+import com.sledge.browser.displayHost
+import com.sledge.browser.displayUrl
 import com.sledge.browser.security.HostWeight
 import com.sledge.browser.security.LookalikeHit
 import com.sledge.browser.security.LookalikeKind
@@ -95,7 +87,7 @@ import kotlinx.coroutines.launch
 private enum class Panel { History, Bookmarks, Settings }
 
 /**
- * Root browser screen: address bar, the active [SledgeWebView], grouped tab
+ * Root browser screen: address bar, the active [BrowserPage], grouped tab
  * strip, memory status, and the ring menu plus history / bookmarks / settings.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -104,34 +96,36 @@ fun BrowserScreen(
     desk: TabDesk,
     store: BrowserStore,
     adBlocker: AdBlocker,
-    brave: BraveAdBlock,
+    brave: ListBlocker,
+    host: ChromeHost,
 ) {
     val tabs = desk.tabs
     val currentIndex = desk.currentIndex
     val groups = desk.groups
-    val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    host.wire(snackbar)
     val currentTab = tabs.getOrNull(currentIndex)
 
-    val webViewCache = remember { mutableMapOf<String, SledgeWebView>() }
+    val webViewCache = remember { mutableMapOf<String, BrowserPage>() }
     val progressByTab = remember { mutableStateMapOf<String, Int>() }
 
     var urlInput by remember { mutableStateOf(TextFieldValue("")) }
     var urlFocused by remember { mutableStateOf(false) }
     var showRingMenu by remember { mutableStateOf(false) }
+    host.ringGesture { showRingMenu = true }
     var showListMenu by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<Panel?>(null) }
     var sheet by remember { mutableStateOf<DeskSheet?>(null) }
     var findOpen by remember { mutableStateOf(false) }
-    var fullscreenView by remember { mutableStateOf<android.view.View?>(null) }
+    var consoleOpen by remember { mutableStateOf(false) }
+    val consoleByTab = remember { mutableStateMapOf<String, androidx.compose.runtime.snapshots.SnapshotStateList<ConsoleLine>>() }
     var skipSettingsReload by remember { mutableStateOf(true) }
     var appliedSettings by remember { mutableStateOf(store.settings) }
     var canBack by remember { mutableStateOf(false) }
     var canForward by remember { mutableStateOf(false) }
-    val pageActions = rememberPageActions(snackbar, store)
     val allowedLookalikes = remember { mutableSetOf<String>() }
     var advisory by remember { mutableStateOf<Pair<LookalikeHit, () -> Unit>?>(null) }
 
@@ -147,7 +141,7 @@ fun BrowserScreen(
         }
     }
 
-    fun syncNav(webView: SledgeWebView?) {
+    fun syncNav(webView: BrowserPage?) {
         canBack = webView?.canGoBack() == true
         canForward = webView?.canGoForward() == true
     }
@@ -161,7 +155,6 @@ fun BrowserScreen(
         val live = tabIds.toSet()
         webViewCache.keys.filter { it !in live }.forEach { id ->
             webViewCache.remove(id)?.let { view ->
-                (view.parent as? ViewGroup)?.removeView(view)
                 view.destroy()
             }
             progressByTab.remove(id)
@@ -177,7 +170,6 @@ fun BrowserScreen(
                 TabLifecycle.Hibernated -> if (view != null) {
                     webViewCache.remove(tab.id)
                     progressByTab.remove(tab.id)
-                    (view.parent as? ViewGroup)?.removeView(view)
                     view.destroy()
                 }
                 TabLifecycle.Frozen -> view?.onPause()
@@ -210,57 +202,44 @@ fun BrowserScreen(
         if (reload) webViewCache.values.forEach { it.reload() }
     }
 
-    fun createWebView(tab: Tab): SledgeWebView = webViewCache.getOrPut(tab.id) {
-        SledgeWebView(
-            context = context,
-            settings = store.settings,
-            adBlocker = adBlocker,
-            brave = brave,
-            onCreateTab = { initialUrl ->
-                val created = desk.open(initialUrl ?: START_PAGE)
-                createWebView(created)
-            },
-        ).also { wv ->
-            wv.onPageStartedCallback = { url ->
-                desk.update(tab.id, url, null, true)
-            }
-            wv.onPageFinishedCallback = { url, title ->
-                desk.update(tab.id, url, title, false)
-                store.recordVisit(url, title ?: "")
-                progressByTab[tab.id] = 100
-                if (tab.id == desk.current?.id) syncNav(wv)
-            }
-            wv.sledgeWebChromeClient.onProgress = { progress ->
-                progressByTab[tab.id] = progress
-            }
-            wv.sledgeWebChromeClient.onTitle = { title ->
-                desk.update(tab.id, wv.url ?: tab.url, title, null)
-            }
-            wv.sledgeWebChromeClient.onEnterFullscreen = { view, _ ->
-                fullscreenView = view
-            }
-            wv.sledgeWebChromeClient.onExitFullscreen = {
-                fullscreenView = null
-            }
-            wv.sledgeWebChromeClient.onShowFileChooser = pageActions.onShowFileChooser
-            wv.sledgeWebChromeClient.onPermissionRequest = pageActions.onPermissionRequest
-            wv.sledgeWebChromeClient.onGeolocation = pageActions.onGeolocation
-            wv.onDownload = { url, userAgent, contentDisposition, mimeType, contentLength ->
-                pageActions.onDownload(wv, url, userAgent, contentDisposition, mimeType, contentLength)
-            }
-            wv.sledgeWebViewClient.onLookalike = { url ->
-                val hit = lookalike(url, visitWeights())
-                if (hit == null || hit.host in allowedLookalikes) {
-                    false
-                } else {
-                    advisory = hit to {
-                        allowedLookalikes += hit.host
-                        wv.loadUrl(url)
-                    }
-                    true
+    fun createWebView(tab: Tab): BrowserPage = webViewCache.getOrPut(tab.id) {
+        val hooks = PageHooks()
+        val page = host.openPage(hooks)
+        hooks.onPageStarted = { url ->
+            desk.update(tab.id, url, null, true)
+        }
+        hooks.onPageFinished = { url, title ->
+            desk.update(tab.id, url, title, false)
+            store.recordVisit(url, title ?: "")
+            progressByTab[tab.id] = 100
+            if (tab.id == desk.current?.id) syncNav(page)
+        }
+        hooks.onProgress = { progress -> progressByTab[tab.id] = progress }
+        hooks.onTitle = { title ->
+            desk.update(tab.id, page.url ?: tab.url, title, null)
+        }
+        hooks.onLookalike = { url ->
+            val hit = lookalike(url, visitWeights())
+            if (hit == null || hit.host in allowedLookalikes) {
+                false
+            } else {
+                advisory = hit to {
+                    allowedLookalikes += hit.host
+                    page.loadUrl(url)
                 }
+                true
             }
         }
+        hooks.onCreateTab = { initialUrl ->
+            val created = desk.open(initialUrl ?: START_PAGE)
+            createWebView(created)
+        }
+        hooks.onConsole = { level, message, source, line ->
+            val lines = consoleByTab.getOrPut(tab.id) { mutableStateListOf() }
+            lines.add(ConsoleLine(level, message, source, line))
+            if (lines.size > 300) lines.removeRange(0, lines.size - 300)
+        }
+        page
     }
 
     LaunchedEffect(currentTab?.id, currentTab?.lifecycle) {
@@ -272,7 +251,7 @@ fun BrowserScreen(
     }
 
     val asleep = currentTab?.lifecycle == TabLifecycle.Hibernated
-    val activeWebView: SledgeWebView? = currentTab?.takeUnless { asleep }?.let { createWebView(it) }
+    val activeWebView: BrowserPage? = currentTab?.takeUnless { asleep }?.let { createWebView(it) }
     val progress = currentTab?.let { progressByTab[it.id] }
         ?: if (currentTab?.isLoading == true) 0 else 100
     val pageUrl = currentTab?.url.orEmpty()
@@ -280,14 +259,14 @@ fun BrowserScreen(
     val bookmarked = canBookmark && store.isBookmarked(pageUrl)
 
     fun rejectBlockedAddress() {
-        scope.launch { snackbar.showSnackbar(context.getString(R.string.address_blocked)) }
+        scope.launch { snackbar.showSnackbar(Strings.address_blocked) }
     }
 
     fun runAddressAction(raw: String) {
         focusManager.clearFocus()
         keyboard?.hide()
-        if (!launchAddressAction(context, raw)) {
-            scope.launch { snackbar.showSnackbar(context.getString(R.string.address_no_app)) }
+        if (!host.launchAddress(raw)) {
+            scope.launch { snackbar.showSnackbar(Strings.address_no_app) }
         }
     }
 
@@ -346,7 +325,7 @@ fun BrowserScreen(
     advisory?.let { (hit, proceed) ->
         AlertDialog(
             onDismissRequest = { advisory = null },
-            title = { Text(stringResource(R.string.lookalike_title)) },
+            title = { Text(Strings.lookalike_title) },
             text = {
                 Column {
                     Text(hit.host, fontWeight = FontWeight.Medium)
@@ -358,7 +337,7 @@ fun BrowserScreen(
             },
             confirmButton = {
                 TextButton(onClick = { advisory = null }) {
-                    Text(stringResource(R.string.lookalike_back))
+                    Text(Strings.lookalike_back)
                 }
             },
             dismissButton = {
@@ -367,20 +346,21 @@ fun BrowserScreen(
                     advisory = null
                     proceed()
                 }) {
-                    Text(stringResource(R.string.lookalike_continue))
+                    Text(Strings.lookalike_continue)
                 }
             },
         )
     }
 
-    BackHandler(
-        enabled = advisory != null || fullscreenView != null || panel != null || sheet != null ||
-            showRingMenu || showListMenu || findOpen || activeWebView?.canGoBack() == true,
+    host.backHandler(
+        advisory != null || activeWebView?.fullscreen == true || panel != null || sheet != null ||
+            showRingMenu || showListMenu || findOpen || consoleOpen || activeWebView?.canGoBack() == true,
     ) {
         when {
             advisory != null -> advisory = null
-            fullscreenView != null -> activeWebView?.sledgeWebChromeClient?.exitFullscreen()
+            activeWebView?.fullscreen == true -> activeWebView?.exitFullscreen()
             findOpen -> findOpen = false
+            consoleOpen -> consoleOpen = false
             showListMenu -> showListMenu = false
             panel != null -> panel = null
             sheet != null -> sheet = null
@@ -392,23 +372,15 @@ fun BrowserScreen(
     DisposableEffect(Unit) {
         onDispose {
             webViewCache.values.forEach { view ->
-                (view.parent as? ViewGroup)?.removeView(view)
                 view.destroy()
             }
             webViewCache.clear()
         }
     }
 
-    val activity = context as? MainActivity
-    SideEffect {
-        activity?.onTwoFingerDoubleTap = { showRingMenu = true }
-    }
-    DisposableEffect(activity) {
-        onDispose { activity?.onTwoFingerDoubleTap = null }
-    }
 
-    val bookmarkSaved = stringResource(R.string.bookmark_added)
-    val bookmarkRemoved = stringResource(R.string.bookmark_removed)
+    val bookmarkSaved = Strings.bookmark_added
+    val bookmarkRemoved = Strings.bookmark_removed
 
     Surface(color = SledgeTheme.Background, modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -427,13 +399,13 @@ fun BrowserScreen(
                     ChromeButton(
                         onClick = { activeWebView?.goBack() },
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        description = stringResource(R.string.go_back),
+                        description = Strings.go_back,
                         tint = if (canBack) SledgeTheme.Dim else SledgeTheme.Muted,
                     )
                     ChromeButton(
                         onClick = { activeWebView?.goForward() },
                         icon = Icons.AutoMirrored.Filled.ArrowForward,
-                        description = stringResource(R.string.go_forward),
+                        description = Strings.go_forward,
                         tint = if (canForward) SledgeTheme.Dim else SledgeTheme.Muted,
                     )
                     Row(
@@ -488,7 +460,7 @@ fun BrowserScreen(
                                 Box(contentAlignment = Alignment.CenterStart) {
                                     if (urlInput.text.isEmpty()) {
                                         Text(
-                                            stringResource(R.string.enter_url),
+                                            Strings.enter_url,
                                             color = SledgeTheme.Muted,
                                             fontSize = 15.sp,
                                             maxLines = 1,
@@ -503,7 +475,7 @@ fun BrowserScreen(
                                 if (asleep) desk.wake(currentIndex) else activeWebView?.reload()
                             },
                             icon = Icons.Default.Refresh,
-                            description = stringResource(R.string.reload),
+                            description = Strings.reload,
                         )
                         ChromeButton(
                             onClick = {
@@ -517,7 +489,7 @@ fun BrowserScreen(
                                 }
                             },
                             icon = if (bookmarked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            description = stringResource(R.string.bookmark_page),
+                            description = Strings.bookmark_page,
                             tint = when {
                                 !canBookmark -> SledgeTheme.Muted
                                 bookmarked -> SledgeTheme.Accent
@@ -529,7 +501,7 @@ fun BrowserScreen(
                         ChromeButton(
                             onClick = { showListMenu = true },
                             icon = Icons.Default.Menu,
-                            description = stringResource(R.string.menu),
+                            description = Strings.menu,
                         )
                         BrowserListMenu(
                             expanded = showListMenu,
@@ -539,6 +511,7 @@ fun BrowserScreen(
                             onCloseTab = { desk.close(currentIndex) },
                             onPorts = { sheet = DeskSheet.Ports },
                             onFind = { findOpen = true },
+                            onConsole = { consoleOpen = true },
                             onBookmarks = { panel = Panel.Bookmarks },
                             onHistory = { panel = Panel.History },
                             onSettings = { panel = Panel.Settings },
@@ -548,6 +521,16 @@ fun BrowserScreen(
 
                 if (findOpen) {
                     FindBar(webView = activeWebView, onClose = { findOpen = false })
+                }
+
+                if (consoleOpen) {
+                    ConsolePanel(
+                        lines = currentTab?.id?.let { consoleByTab[it] }.orEmpty(),
+                        endpoint = store.settings.shareEndpoint,
+                        onEndpointChange = { store.updateSettings(store.settings.copy(shareEndpoint = it)) },
+                        onClear = { currentTab?.id?.let { consoleByTab[it]?.clear() } },
+                        onClose = { consoleOpen = false },
+                    )
                 }
 
                 if (!asleep && progress < 100) {
@@ -571,13 +554,7 @@ fun BrowserScreen(
                             modifier = Modifier.fillMaxSize(),
                         )
                         tab != null && webView != null -> key(tab.id) {
-                            AndroidView(
-                                factory = {
-                                    (webView.parent as? ViewGroup)?.removeView(webView)
-                                    webView
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                            )
+                            host.pageSlot(webView, Modifier.fillMaxSize())
                         }
                     }
                 }
@@ -597,20 +574,10 @@ fun BrowserScreen(
                 )
             }
 
-            fullscreenView?.let { fsView ->
-                AndroidView(
-                    factory = {
-                        (fsView.parent as? ViewGroup)?.removeView(fsView)
-                        fsView.apply {
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
+if (activeWebView?.fullscreen == true && activeWebView != null) {
+                host.fullscreen(activeWebView, Modifier.fillMaxSize())
             }
+
 
             SnackbarHost(
                 hostState = snackbar,
@@ -717,24 +684,24 @@ private fun lookalikeMessage(hit: LookalikeHit): String {
     val visits = hit.neighborVisits
     return when (hit.kind) {
         LookalikeKind.Homoglyph -> if (visits > 0) {
-            stringResource(R.string.lookalike_homoglyph_visits, hit.neighbor, visits)
+            Strings.lookalike_homoglyph_visits( hit.neighbor, visits)
         } else {
-            stringResource(R.string.lookalike_homoglyph, hit.neighbor)
+            Strings.lookalike_homoglyph( hit.neighbor)
         }
-        LookalikeKind.MixedScript -> stringResource(R.string.lookalike_mixed, hit.neighbor)
+        LookalikeKind.MixedScript -> Strings.lookalike_mixed( hit.neighbor)
         LookalikeKind.HiddenCharacters -> if (hit.neighbor == hit.host) {
-            stringResource(R.string.lookalike_hidden)
+            Strings.lookalike_hidden
         } else if (visits > 0) {
-            stringResource(R.string.lookalike_homoglyph_visits, hit.neighbor, visits)
+            Strings.lookalike_homoglyph_visits( hit.neighbor, visits)
         } else {
-            stringResource(R.string.lookalike_homoglyph, hit.neighbor)
+            Strings.lookalike_homoglyph( hit.neighbor)
         }
-        LookalikeKind.EmbeddedName -> stringResource(R.string.lookalike_embedded, hit.neighbor, hit.host)
-        LookalikeKind.Kerning -> stringResource(R.string.lookalike_kerning, hit.neighbor)
+        LookalikeKind.EmbeddedName -> Strings.lookalike_embedded( hit.neighbor, hit.host)
+        LookalikeKind.Kerning -> Strings.lookalike_kerning( hit.neighbor)
         LookalikeKind.Misspelling -> if (visits > 0) {
-            stringResource(R.string.lookalike_misspelling_visits, hit.neighbor, visits)
+            Strings.lookalike_misspelling_visits( hit.neighbor, visits)
         } else {
-            stringResource(R.string.lookalike_misspelling, hit.neighbor)
+            Strings.lookalike_misspelling( hit.neighbor)
         }
     }
 }
@@ -765,6 +732,7 @@ private fun BrowserListMenu(
     onCloseTab: () -> Unit,
     onPorts: () -> Unit,
     onFind: () -> Unit,
+    onConsole: () -> Unit,
     onBookmarks: () -> Unit,
     onHistory: () -> Unit,
     onSettings: () -> Unit,
@@ -776,17 +744,18 @@ private fun BrowserListMenu(
         shape = SledgeTheme.Corner,
     ) {
         listOf(
-            R.string.new_tab to onNewTab,
-            R.string.tabs to onTabs,
-            R.string.close_tab to onCloseTab,
-            R.string.dev_ports to onPorts,
-            R.string.find_in_page to onFind,
-            R.string.bookmarks to onBookmarks,
-            R.string.history to onHistory,
-            R.string.settings to onSettings,
+            Strings.new_tab to onNewTab,
+            Strings.tabs to onTabs,
+            Strings.close_tab to onCloseTab,
+            Strings.dev_ports to onPorts,
+            Strings.find_in_page to onFind,
+            Strings.console to onConsole,
+            Strings.bookmarks to onBookmarks,
+            Strings.history to onHistory,
+            Strings.settings to onSettings,
         ).forEach { (label, action) ->
             DropdownMenuItem(
-                text = { Text(stringResource(label), color = SledgeTheme.Text) },
+                text = { Text(label, color = SledgeTheme.Text) },
                 onClick = {
                     onDismiss()
                     action()
@@ -807,12 +776,12 @@ private fun ringMenuActions(
     onHistory: () -> Unit,
     onSettings: () -> Unit,
 ): List<RingMenuAction> = listOf(
-    RingMenuAction(stringResource(R.string.ring_new), onNewTab),
-    RingMenuAction(stringResource(R.string.ring_tabs), onTabs),
-    RingMenuAction(stringResource(R.string.ring_close), onCloseTab),
-    RingMenuAction(stringResource(R.string.ring_ports), onPorts),
-    RingMenuAction(stringResource(R.string.ring_find), onFind),
-    RingMenuAction(stringResource(R.string.ring_bookmarks), onBookmarks),
-    RingMenuAction(stringResource(R.string.ring_history), onHistory),
-    RingMenuAction(stringResource(R.string.ring_settings), onSettings),
+    RingMenuAction(Strings.ring_new, onNewTab),
+    RingMenuAction(Strings.ring_tabs, onTabs),
+    RingMenuAction(Strings.ring_close, onCloseTab),
+    RingMenuAction(Strings.ring_ports, onPorts),
+    RingMenuAction(Strings.ring_find, onFind),
+    RingMenuAction(Strings.ring_bookmarks, onBookmarks),
+    RingMenuAction(Strings.ring_history, onHistory),
+    RingMenuAction(Strings.ring_settings, onSettings),
 )
