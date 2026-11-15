@@ -23,6 +23,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.graphics.Color
 import com.sledge.browser.adblock.AdBlocker
 import com.sledge.browser.android.engine.BraveAdBlock
+import com.sledge.browser.ui.ExtensionCatalog
 import com.sledge.browser.ui.BrowserScreen
 
 private val SteelBackground = Color(0xFF0C0C0E)
@@ -56,6 +57,7 @@ class MainActivity : ComponentActivity() {
     private val store = BrowserStore()
     private val session by lazy { SessionFile(File(filesDir, "session.json")) }
     private val adBlocker = AdBlocker()
+    private val extensions by lazy { ExtensionCatalog(File(filesDir, "extensions")) }
     private lateinit var brave: BraveAdBlock
     private lateinit var twoFingerDoubleTap: TwoFingerDoubleTap
 
@@ -101,6 +103,7 @@ class MainActivity : ComponentActivity() {
                     store = store,
                     adBlocker = adBlocker,
                     brave = brave,
+                    extensions = extensions,
                     host = host,
                 )
             }

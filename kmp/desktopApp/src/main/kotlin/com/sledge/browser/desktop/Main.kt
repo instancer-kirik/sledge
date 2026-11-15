@@ -22,6 +22,7 @@ import com.sledge.browser.BrowserStore
 import com.sledge.browser.START_PAGE
 import com.sledge.browser.TabDesk
 import com.sledge.browser.ui.BrowserScreen
+import com.sledge.browser.ui.ExtensionCatalog
 import java.io.File
 
 fun main() {
@@ -47,6 +48,7 @@ fun main() {
                     it.start()
                 }
             }
+            val extensions = remember { ExtensionCatalog(File("extensions").absoluteFile) }
             var ready by remember { mutableStateOf(false) }
             var status by remember { mutableStateOf("Starting the browser engine") }
             LaunchedEffect(Unit) {
@@ -79,7 +81,7 @@ fun main() {
             }
             if (ready) {
                 val host = rememberDesktopHost()
-                BrowserScreen(desk, store, blocker, filters, host)
+                BrowserScreen(desk, store, blocker, filters, extensions, host)
             } else {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(status)

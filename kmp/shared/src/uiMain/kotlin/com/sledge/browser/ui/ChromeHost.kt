@@ -45,6 +45,9 @@ interface BrowserPage {
     fun clearMatches()
     fun findAllAsync(query: String)
     fun findNext(forward: Boolean)
+
+    /** Runs in the page after it finishes loading. Used for extension content scripts. */
+    fun evaluate(script: String) {}
 }
 
 /** Filter status the settings panel shows. The engine stays on the target. */
@@ -62,4 +65,6 @@ class ChromeHost(
     val launchAddress: (String) -> Boolean,
     val ringGesture: @Composable (() -> Unit) -> Unit,
     val wire: @Composable (SnackbarHostState) -> Unit,
+    /** Opens a file picker and passes back the chosen `.zip` or `.crx` bytes. */
+    val chooseZip: ((ByteArray) -> Unit) -> Unit = {},
 )

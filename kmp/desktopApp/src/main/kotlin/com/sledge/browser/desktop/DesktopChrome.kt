@@ -37,7 +37,9 @@ import java.io.File
 import java.net.URI
 import java.net.URLEncoder
 import java.util.concurrent.CopyOnWriteArrayList
+import javax.swing.JFileChooser
 import javax.swing.SwingUtilities
+import javax.swing.filechooser.FileNameExtensionFilter
 import kotlin.concurrent.thread
 
 /** Desktop page host. The shared screen talks to Chromium through this file. */
@@ -50,6 +52,13 @@ fun rememberDesktopHost(): ChromeHost = ChromeHost(
     launchAddress = { _ -> false },
     ringGesture = { _ -> },
     wire = { _: SnackbarHostState -> },
+    chooseZip = { deliver ->
+        val chooser = JFileChooser()
+        chooser.fileFilter = FileNameExtensionFilter("Extension", "zip", "crx")
+        if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+            deliver(chooser.selectedFile.readBytes())
+        }
+    },
 )
 
 /** Brave's adblock-rust, the same engine and filter lists the Android app uses. */
@@ -445,6 +454,9 @@ class DesktopBrowserPage(private val hooks: PageHooks) : BrowserPage {
     override fun clearMatches() { browser?.stopFinding(true) }
     override fun findAllAsync(query: String) { browser?.find(query, true, false, false) }
     override fun findNext(forward: Boolean) {}
+    override fun evaluate(script: String) {
+        browser?.executeJavaScript(script, current.orEmpty(), 0)
+    }
 
     /**
      * The native browser is created once its component is on screen. Creating

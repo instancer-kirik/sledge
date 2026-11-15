@@ -4,11 +4,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -36,6 +39,12 @@ fun rememberAndroidHost(
 ): ChromeHost {
     val context = LocalContext.current
     val actions = androidx.compose.runtime.remember { mutableStateOf<PageActions?>(null) }
+    val zipReceiver = remember { mutableStateOf<(ByteArray) -> Unit>({}) }
+    val openZip = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@rememberLauncherForActivityResult
+        zipReceiver.value(bytes)
+    }
     return ChromeHost(
         openPage = { hooks -> AndroidBrowserPage(context, store, adBlocker, brave, hooks, actions) },
         pageSlot = { page, modifier ->
@@ -55,6 +64,10 @@ fun rememberAndroidHost(
             }
         },
         wire = { snackbar -> actions.value = rememberPageActions(snackbar, store) },
+        chooseZip = { deliver ->
+            zipReceiver.value = deliver
+            openZip.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+        },
     )
 }
 
@@ -169,4 +182,5 @@ class AndroidBrowserPage(
     override fun clearMatches() = webView.clearMatches()
     override fun findAllAsync(query: String) = webView.findAllAsync(query)
     override fun findNext(forward: Boolean) = webView.findNext(forward)
+    override fun evaluate(script: String) = webView.evaluateJavascript(script, null)
 }

@@ -84,7 +84,7 @@ import com.sledge.browser.model.TabLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private enum class Panel { History, Bookmarks, Settings }
+private enum class Panel { History, Bookmarks, Settings, Extensions }
 
 /**
  * Root browser screen: address bar, the active [BrowserPage], grouped tab
@@ -97,6 +97,7 @@ fun BrowserScreen(
     store: BrowserStore,
     adBlocker: AdBlocker,
     brave: ListBlocker,
+    extensions: ExtensionCatalog,
     host: ChromeHost,
 ) {
     val tabs = desk.tabs
@@ -212,6 +213,9 @@ fun BrowserScreen(
             desk.update(tab.id, url, title, false)
             store.recordVisit(url, title ?: "")
             progressByTab[tab.id] = 100
+            if (store.settings.javascriptEnabled) {
+                extensions.scriptsFor(url).forEach { page.evaluate(it) }
+            }
             if (tab.id == desk.current?.id) syncNav(page)
         }
         hooks.onProgress = { progress -> progressByTab[tab.id] = progress }
@@ -514,6 +518,7 @@ fun BrowserScreen(
                             onConsole = { consoleOpen = true },
                             onBookmarks = { panel = Panel.Bookmarks },
                             onHistory = { panel = Panel.History },
+                            onExtensions = { panel = Panel.Extensions },
                             onSettings = { panel = Panel.Settings },
                         )
                     }
@@ -666,6 +671,10 @@ if (activeWebView?.fullscreen == true && activeWebView != null) {
                     onOpen = { openUrl(it) },
                     onDelete = { id -> store.deleteBookmark(id) },
                 )
+                Panel.Extensions -> ExtensionsPanel(
+                    extensions = extensions,
+                    onInstall = host.chooseZip,
+                )
                 Panel.Settings -> SettingsPanel(
                     settings = store.settings,
                     status = brave.status,
@@ -735,6 +744,7 @@ private fun BrowserListMenu(
     onConsole: () -> Unit,
     onBookmarks: () -> Unit,
     onHistory: () -> Unit,
+    onExtensions: () -> Unit,
     onSettings: () -> Unit,
 ) {
     DropdownMenu(
@@ -752,6 +762,7 @@ private fun BrowserListMenu(
             Strings.console to onConsole,
             Strings.bookmarks to onBookmarks,
             Strings.history to onHistory,
+            Strings.extensions to onExtensions,
             Strings.settings to onSettings,
         ).forEach { (label, action) ->
             DropdownMenuItem(

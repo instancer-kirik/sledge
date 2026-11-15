@@ -320,6 +320,75 @@ internal fun SettingToggle(
     }
 }
 
+@Composable
+fun ExtensionsPanel(
+    extensions: ExtensionCatalog,
+    onInstall: ((ByteArray) -> Unit) -> Unit,
+) {
+    var message by rememberSaveable { mutableStateOf("") }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 24.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = Strings.extensions,
+                style = MaterialTheme.typography.titleLarge,
+                color = NordText,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = {
+                onInstall { bytes ->
+                    message = extensions.install(bytes).orEmpty()
+                }
+            }) {
+                Text(Strings.install_extension, color = NordAccent)
+            }
+        }
+        Text(
+            text = Strings.extensions_summary,
+            color = NordMuted,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        if (message.isNotEmpty()) {
+            Text(message, color = NordAccent, modifier = Modifier.padding(bottom = 8.dp))
+        }
+        if (extensions.items.isEmpty()) {
+            Text(Strings.extensions_empty, color = NordMuted)
+        }
+        extensions.items.forEach { item ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(item.name, color = NordText)
+                    if (item.version.isNotEmpty()) {
+                        Text(item.version, color = NordMuted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Switch(
+                    checked = item.enabled,
+                    onCheckedChange = { extensions.setEnabled(item.id, it) },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = NordAccent,
+                        checkedThumbColor = NordField,
+                        uncheckedTrackColor = NordOutline,
+                        uncheckedThumbColor = NordMuted,
+                        uncheckedBorderColor = NordOutline,
+                    ),
+                )
+                IconButton(onClick = { extensions.remove(item.id) }) {
+                    Icon(Icons.Default.Delete, contentDescription = Strings.remove_extension, tint = NordMuted)
+                }
+            }
+        }
+    }
+}
+
 private fun formatAge(visitedAt: Long): String {
     val minutes = (System.currentTimeMillis() - visitedAt) / 60_000
     return when {
