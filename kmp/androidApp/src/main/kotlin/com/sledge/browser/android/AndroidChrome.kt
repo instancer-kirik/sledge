@@ -159,6 +159,9 @@ class AndroidBrowserPage(
                 message.lineNumber(),
             )
         }
+        view.sledgeWebViewClient.onResource = { url, type, blocked ->
+            hooks.onNetwork(url, type, blocked)
+        }
     }
 
     override val url: String? get() = webView.url
@@ -182,5 +185,8 @@ class AndroidBrowserPage(
     override fun clearMatches() = webView.clearMatches()
     override fun findAllAsync(query: String) = webView.findAllAsync(query)
     override fun findNext(forward: Boolean) = webView.findNext(forward)
-    override fun evaluate(script: String) = webView.evaluateJavascript(script, null)
+    override fun evaluate(script: String) = evaluate(script) {}
+    override fun evaluate(script: String, onResult: (String?) -> Unit) {
+        webView.evaluateJavascript(script) { value -> onResult(value) }
+    }
 }

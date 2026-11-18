@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -298,34 +302,48 @@ fun FindBar(webView: BrowserPage?, onClose: () -> Unit) {
 }
 
 @Composable
-fun ConsolePanel(
+fun ColumnScope.ConsolePanel(
     lines: List<ConsoleLine>,
     endpoint: String,
     onEndpointChange: (String) -> Unit,
     onClear: () -> Unit,
     onClose: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var selected by remember { mutableStateOf(setOf<Int>()) }
     var status by remember { mutableStateOf(Strings.console_select) }
     var posting by remember { mutableStateOf(false) }
+    var levelFilter by remember { mutableStateOf("all") }
+    var query by remember { mutableStateOf("") }
+    val shown = lines.mapIndexed { index, line -> index to line }.filter { (_, entry) ->
+        val levelOk = levelFilter == "all" || entry.level.name.equals(levelFilter, ignoreCase = true)
+        val queryOk = query.isBlank() ||
+            entry.message.contains(query, ignoreCase = true) ||
+            entry.source.contains(query, ignoreCase = true)
+        levelOk && queryOk
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(300.dp)
+            .then(if (embedded) Modifier.weight(1f) else Modifier.height(300.dp))
             .background(SledgeTheme.Chrome),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                Strings.console,
-                color = SledgeTheme.Text,
-                fontSize = 13.sp,
-                modifier = Modifier.weight(1f),
-            )
+            if (!embedded) {
+                Text(
+                    Strings.console,
+                    color = SledgeTheme.Text,
+                    fontSize = 13.sp,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Box(Modifier.weight(1f))
+            }
             TextButton(onClick = {
                 val text = chosenLines(lines, selected).asShareText()
                 if (text.isBlank()) {
@@ -340,8 +358,10 @@ fun ConsolePanel(
             TextButton(onClick = onClear) {
                 Text(Strings.clear_console, color = SledgeTheme.Dim, fontSize = 13.sp)
             }
-            IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Default.Close, Strings.close_find, tint = SledgeTheme.Dim)
+            if (!embedded) {
+                IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Close, Strings.close_find, tint = SledgeTheme.Dim)
+                }
             }
         }
         Row(
@@ -398,38 +418,85 @@ fun ConsolePanel(
             fontSize = 11.sp,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
         )
+        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            listOf("all", "error", "warn", "info", "log").forEach { name ->
+                TextButton(onClick = { levelFilter = name }) {
+                    Text(
+                        name.replaceFirstChar { it.uppercase() },
+                        color = if (levelFilter == name) SledgeTheme.Strike else SledgeTheme.Dim,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
+        BasicTextField(
+            value = query,
+            onValueChange = { query = it },
+            singleLine = true,
+            textStyle = TextStyle(color = SledgeTheme.Text, fontSize = 12.sp),
+            cursorBrush = SolidColor(SledgeTheme.Strike),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .background(SledgeTheme.Surface)
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            decorationBox = { inner ->
+                if (query.isEmpty()) {
+                    Text(Strings.devtools_filter, color = SledgeTheme.Muted, fontSize = 12.sp)
+                }
+                inner()
+            },
+        )
         if (lines.isEmpty()) {
             Text(
                 Strings.console_empty,
                 color = SledgeTheme.Muted,
                 fontSize = 13.sp,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp).weight(1f),
+            )
+        } else if (shown.isEmpty()) {
+            Text(
+                Strings.devtools_no_match,
+                color = SledgeTheme.Muted,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp).weight(1f),
             )
         } else {
             LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                items(lines.size) { index ->
-                    val entry = lines[index]
+                items(shown.size) { row ->
+                    val index = shown[row].first
+                    val entry = shown[row].second
                     val color = when (entry.level) {
                         ConsoleLevel.Error -> SledgeTheme.Red
                         ConsoleLevel.Warn -> SledgeTheme.Yellow
                         ConsoleLevel.Info -> SledgeTheme.Dim
                         ConsoleLevel.Log -> SledgeTheme.Text
                     }
-                    val where = if (entry.source.isBlank()) "" else "  ${entry.source}:${entry.line}"
-                    Text(
-                        text = entry.message + where,
-                        color = color,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        style = TextStyle(lineHeight = 16.sp),
+                    val where = when {
+                        entry.source.isBlank() -> ""
+                        entry.line > 0 -> "${entry.source}:${entry.line}"
+                        else -> entry.source
+                    }
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(if (index in selected) SledgeTheme.Elevated else Color.Transparent)
                             .clickable {
                                 selected = if (index in selected) selected - index else selected + index
                             }
-                            .padding(horizontal = 12.dp, vertical = 3.dp),
-                    )
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = entry.message,
+                            color = color,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            style = TextStyle(lineHeight = 16.sp),
+                        )
+                        if (where.isNotEmpty()) {
+                            Text(where, color = SledgeTheme.Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                        }
+                    }
                 }
             }
         }

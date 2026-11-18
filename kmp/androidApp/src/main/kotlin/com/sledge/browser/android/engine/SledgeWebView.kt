@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.util.Base64
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -83,6 +84,8 @@ class SledgeWebView(
             settings.customUserAgent?.let { userAgentString = it }
             cacheMode = WebSettings.LOAD_DEFAULT
         }
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
         // ---- Hardware acceleration (set at view level for good measure) ----
         setLayerType(LAYER_TYPE_HARDWARE, null)

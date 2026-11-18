@@ -3,7 +3,11 @@ package com.sledge.browser.ui
 import com.sledge.browser.Strings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -20,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Lock
@@ -46,6 +51,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,7 +61,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -71,6 +79,8 @@ import com.sledge.browser.adblock.AdBlocker
 import com.sledge.browser.AddressInput
 import com.sledge.browser.BrowserStore
 import com.sledge.browser.addressBarTarget
+import com.sledge.browser.openTabMatches
+import com.sledge.browser.webSearchUrl
 import com.sledge.browser.START_PAGE
 import com.sledge.browser.TabDesk
 import com.sledge.browser.displayHost
@@ -115,14 +125,17 @@ fun BrowserScreen(
 
     var urlInput by remember { mutableStateOf(TextFieldValue("")) }
     var urlFocused by remember { mutableStateOf(false) }
+    var suggestionsOpen by remember { mutableStateOf(false) }
+    var suggestionBaseline by remember { mutableStateOf("") }
     var showRingMenu by remember { mutableStateOf(false) }
     host.ringGesture { showRingMenu = true }
     var showListMenu by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<Panel?>(null) }
     var sheet by remember { mutableStateOf<DeskSheet?>(null) }
     var findOpen by remember { mutableStateOf(false) }
-    var consoleOpen by remember { mutableStateOf(false) }
+    var devtoolsOpen by remember { mutableStateOf(false) }
     val consoleByTab = remember { mutableStateMapOf<String, androidx.compose.runtime.snapshots.SnapshotStateList<ConsoleLine>>() }
+    val networkByTab = remember { mutableStateMapOf<String, androidx.compose.runtime.snapshots.SnapshotStateList<NetworkEntry>>() }
     var skipSettingsReload by remember { mutableStateOf(true) }
     var appliedSettings by remember { mutableStateOf(store.settings) }
     var canBack by remember { mutableStateOf(false) }
@@ -208,11 +221,16 @@ fun BrowserScreen(
         val page = host.openPage(hooks)
         hooks.onPageStarted = { url ->
             desk.update(tab.id, url, null, true)
+            networkByTab[tab.id]?.clear()
+            page.evaluate(CONSOLE_HOOK)
+            page.evaluate(INSPECT_INSTALL)
         }
         hooks.onPageFinished = { url, title ->
             desk.update(tab.id, url, title, false)
             store.recordVisit(url, title ?: "")
             progressByTab[tab.id] = 100
+            page.evaluate(CONSOLE_HOOK)
+            page.evaluate(INSPECT_INSTALL)
             if (store.settings.javascriptEnabled) {
                 extensions.scriptsFor(url).forEach { page.evaluate(it) }
             }
@@ -242,6 +260,11 @@ fun BrowserScreen(
             val lines = consoleByTab.getOrPut(tab.id) { mutableStateListOf() }
             lines.add(ConsoleLine(level, message, source, line))
             if (lines.size > 300) lines.removeRange(0, lines.size - 300)
+        }
+        hooks.onNetwork = { url, type, blocked ->
+            val rows = networkByTab.getOrPut(tab.id) { mutableStateListOf() }
+            rows.add(NetworkEntry(url, type, blocked))
+            if (rows.size > 400) rows.removeRange(0, rows.size - 400)
         }
         page
     }
@@ -358,13 +381,13 @@ fun BrowserScreen(
 
     host.backHandler(
         advisory != null || activeWebView?.fullscreen == true || panel != null || sheet != null ||
-            showRingMenu || showListMenu || findOpen || consoleOpen || activeWebView?.canGoBack() == true,
+            showRingMenu || showListMenu || findOpen || devtoolsOpen || activeWebView?.canGoBack() == true,
     ) {
         when {
             advisory != null -> advisory = null
             activeWebView?.fullscreen == true -> activeWebView?.exitFullscreen()
             findOpen -> findOpen = false
-            consoleOpen -> consoleOpen = false
+            devtoolsOpen -> devtoolsOpen = false
             showListMenu -> showListMenu = false
             panel != null -> panel = null
             sheet != null -> sheet = null
@@ -437,7 +460,10 @@ fun BrowserScreen(
                         )
                         BasicTextField(
                             value = urlInput,
-                            onValueChange = { urlInput = it },
+                            onValueChange = { next ->
+                                urlInput = next
+                                if (next.text != suggestionBaseline) suggestionsOpen = true
+                            },
                             singleLine = true,
                             textStyle = TextStyle(
                                 color = SledgeTheme.Text,
@@ -456,8 +482,12 @@ fun BrowserScreen(
                                 .onFocusChanged { state ->
                                     val focused = state.isFocused
                                     if (focused && !urlFocused) {
-                                        urlInput = TextFieldValue(displayUrl(pageUrl))
+                                        val shown = displayUrl(pageUrl)
+                                        urlInput = TextFieldValue(shown)
+                                        suggestionBaseline = shown
+                                        suggestionsOpen = true
                                     }
+                                    if (!focused) suggestionsOpen = false
                                     urlFocused = focused
                                 },
                             decorationBox = { inner ->
@@ -515,7 +545,7 @@ fun BrowserScreen(
                             onCloseTab = { desk.close(currentIndex) },
                             onPorts = { sheet = DeskSheet.Ports },
                             onFind = { findOpen = true },
-                            onConsole = { consoleOpen = true },
+                            onConsole = { devtoolsOpen = true },
                             onBookmarks = { panel = Panel.Bookmarks },
                             onHistory = { panel = Panel.History },
                             onExtensions = { panel = Panel.Extensions },
@@ -524,18 +554,44 @@ fun BrowserScreen(
                     }
                 }
 
-                if (findOpen) {
-                    FindBar(webView = activeWebView, onClose = { findOpen = false })
+                LaunchedEffect(urlFocused, urlInput.text, suggestionBaseline) {
+                    if (!urlFocused || urlInput.text != suggestionBaseline) return@LaunchedEffect
+                    delay(800)
+                    if (urlInput.text == suggestionBaseline) suggestionsOpen = false
+                }
+                val tabMatches = if (urlFocused && suggestionsOpen) {
+                    openTabMatches(urlInput.text, tabs).take(8)
+                } else {
+                    emptyList()
+                }
+                if (tabMatches.isNotEmpty()) {
+                    val hosts = tabMatches.map { displayHost(tabs[it].url).lowercase() }.distinct()
+                    AddressSuggestions(
+                        query = urlInput.text.trim(),
+                        matches = tabMatches.map { it to tabs[it] },
+                        hosts = hosts,
+                        onSwitch = { index ->
+                            focusManager.clearFocus()
+                            keyboard?.hide()
+                            if (index != currentIndex) desk.select(index)
+                        },
+                        onOpenDomain = { host ->
+                            focusManager.clearFocus()
+                            keyboard?.hide()
+                            desk.open("https://$host")
+                        },
+                        onSearch = {
+                            val query = urlInput.text.trim()
+                            focusManager.clearFocus()
+                            keyboard?.hide()
+                            openUrl(webSearchUrl(query))
+                        },
+                        onClose = { suggestionsOpen = false },
+                    )
                 }
 
-                if (consoleOpen) {
-                    ConsolePanel(
-                        lines = currentTab?.id?.let { consoleByTab[it] }.orEmpty(),
-                        endpoint = store.settings.shareEndpoint,
-                        onEndpointChange = { store.updateSettings(store.settings.copy(shareEndpoint = it)) },
-                        onClear = { currentTab?.id?.let { consoleByTab[it]?.clear() } },
-                        onClose = { consoleOpen = false },
-                    )
+                if (findOpen) {
+                    FindBar(webView = activeWebView, onClose = { findOpen = false })
                 }
 
                 if (!asleep && progress < 100) {
@@ -549,17 +605,47 @@ fun BrowserScreen(
                     )
                 }
 
-                Box(modifier = Modifier.weight(1f).background(SledgeTheme.Background)) {
-                    val tab = currentTab
-                    val webView = activeWebView
-                    when {
-                        tab != null && asleep -> SleepingTab(
-                            tab = tab,
-                            onWake = { desk.wake(currentIndex) },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                        tab != null && webView != null -> key(tab.id) {
-                            host.pageSlot(webView, Modifier.fillMaxSize())
+                BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    val available = maxHeight
+                    var split by remember { mutableFloatStateOf(0.5f) }
+                    Column(Modifier.fillMaxSize()) {
+                        if (devtoolsOpen) {
+                            DevToolsPanel(
+                                page = activeWebView,
+                                lines = currentTab?.id?.let { consoleByTab[it] }.orEmpty(),
+                                network = currentTab?.id?.let { networkByTab[it] }.orEmpty(),
+                                endpoint = store.settings.shareEndpoint,
+                                onEndpointChange = { store.updateSettings(store.settings.copy(shareEndpoint = it)) },
+                                onClearConsole = { currentTab?.id?.let { consoleByTab[it]?.clear() } },
+                                onClearNetwork = { currentTab?.id?.let { networkByTab[it]?.clear() } },
+                                onClose = { devtoolsOpen = false },
+                                modifier = Modifier.fillMaxWidth().height(available * split),
+                            )
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .background(SledgeTheme.Elevated)
+                                    .pointerInput(available) {
+                                        detectVerticalDragGestures { _, drag ->
+                                            split = (split + drag / available.toPx()).coerceIn(0.22f, 0.78f)
+                                        }
+                                    },
+                            )
+                        }
+                        Box(modifier = Modifier.weight(1f).background(SledgeTheme.Background)) {
+                            val tab = currentTab
+                            val webView = activeWebView
+                            when {
+                                tab != null && asleep -> SleepingTab(
+                                    tab = tab,
+                                    onWake = { desk.wake(currentIndex) },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                                tab != null && webView != null -> key(tab.id) {
+                                    host.pageSlot(webView, Modifier.fillMaxSize())
+                                }
+                            }
                         }
                     }
                 }
@@ -759,7 +845,7 @@ private fun BrowserListMenu(
             Strings.close_tab to onCloseTab,
             Strings.dev_ports to onPorts,
             Strings.find_in_page to onFind,
-            Strings.console to onConsole,
+            Strings.devtools to onConsole,
             Strings.bookmarks to onBookmarks,
             Strings.history to onHistory,
             Strings.extensions to onExtensions,
@@ -796,3 +882,69 @@ private fun ringMenuActions(
     RingMenuAction(Strings.ring_history, onHistory),
     RingMenuAction(Strings.ring_settings, onSettings),
 )
+
+@Composable
+private fun AddressSuggestions(
+    query: String,
+    matches: List<Pair<Int, Tab>>,
+    hosts: List<String>,
+    onSwitch: (Int) -> Unit,
+    onOpenDomain: (String) -> Unit,
+    onSearch: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+            .clip(SledgeTheme.Corner)
+            .background(SledgeTheme.Elevated),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier.size(36.dp).focusProperties { canFocus = false },
+            ) {
+                Icon(Icons.Default.Close, Strings.close_suggestions, tint = SledgeTheme.Dim)
+            }
+        }
+        matches.forEach { (index, tab) ->
+            val host = displayHost(tab.url)
+            SuggestionRow(
+                title = tab.title.ifBlank { host },
+                detail = host,
+                onClick = { onSwitch(index) },
+            )
+        }
+        hosts.forEach { host ->
+            SuggestionRow(
+                title = Strings.open_domain_tab(host),
+                detail = "",
+                onClick = { onOpenDomain(host) },
+            )
+        }
+        SuggestionRow(
+            title = Strings.search_for_query(query),
+            detail = "",
+            onClick = onSearch,
+        )
+    }
+}
+
+@Composable
+private fun SuggestionRow(title: String, detail: String, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(title, color = SledgeTheme.Text, fontSize = 15.sp, maxLines = 1)
+        if (detail.isNotBlank() && !title.equals(detail, ignoreCase = true)) {
+            Text(detail, color = SledgeTheme.Muted, fontSize = 12.sp, maxLines = 1)
+        }
+    }
+}

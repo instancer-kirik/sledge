@@ -2,9 +2,10 @@
 
 .PHONY: build run
 
-# Compile the desktop app. Launch it with `make run`.
+# Compile the desktop app.
 build:
 	cd kmp && ./gradlew :desktopApp:compileKotlin
 
-run: build
+# Launch it. Gradle compiles first when sources are out of date.
+run:
 	cd kmp && ./gradlew :desktopApp:run

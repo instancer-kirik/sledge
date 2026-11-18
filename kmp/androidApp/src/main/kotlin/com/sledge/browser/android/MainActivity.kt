@@ -23,6 +23,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.graphics.Color
 import com.sledge.browser.adblock.AdBlocker
 import com.sledge.browser.android.engine.BraveAdBlock
+import com.sledge.browser.android.profile.AndroidBrowserProfile
 import com.sledge.browser.ui.ExtensionCatalog
 import com.sledge.browser.ui.BrowserScreen
 
@@ -56,6 +57,7 @@ class MainActivity : ComponentActivity() {
     private val desk = TabDesk()
     private val store = BrowserStore()
     private val session by lazy { SessionFile(File(filesDir, "session.json")) }
+    private val profile = AndroidBrowserProfile()
     private val adBlocker = AdBlocker()
     private val extensions by lazy { ExtensionCatalog(File(filesDir, "extensions")) }
     private lateinit var brave: BraveAdBlock
@@ -82,6 +84,7 @@ class MainActivity : ComponentActivity() {
         twoFingerDoubleTap = TwoFingerDoubleTap.create(ViewConfiguration.get(this))
         brave = BraveAdBlock(applicationContext)
 
+        profile.open()
         session.load(desk, store)
         desk.onChanged = { session.save(desk, store) }
         store.onChanged = { session.save(desk, store) }
@@ -112,6 +115,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         session.save(desk, store)
+        profile.flush()
         super.onStop()
     }
 

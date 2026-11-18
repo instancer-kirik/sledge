@@ -8,6 +8,7 @@ import com.sledge.browser.history.HistoryEntry
 import com.sledge.browser.history.HistoryManager
 import com.sledge.browser.model.Bookmark
 import com.sledge.browser.model.BrowserSettings
+import com.sledge.browser.model.Tab
 
 /** Local start page bundled in android assets. */
 var START_PAGE: String = "about:blank"
@@ -46,6 +47,40 @@ fun addressBarTarget(text: String): AddressInput {
 /** Hide the asset URL in the address bar. */
 fun displayUrl(url: String): String =
     if (url.startsWith("file:///android_asset/") || url.endsWith("/start.html")) "" else url
+
+/**
+ * Open tabs the address bar can offer for [query]. A fragment such as `github`
+ * matches every tab on that site, plus a tab whose title contains the query.
+ * Most recently used first. Submitting the bar does not use this.
+ */
+fun openTabMatches(query: String, tabs: List<Tab>): List<Int> {
+    val needle = query.trim().lowercase()
+    if (needle.length < 2) return emptyList()
+    val hostNeedle = needle
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .removePrefix("www.")
+        .substringBefore('/')
+        .substringBefore('?')
+        .substringBefore('#')
+    if (hostNeedle.isEmpty()) return emptyList()
+    return tabs.indices
+        .filter { index ->
+            val tab = tabs[index]
+            val host = displayHost(tab.url).lowercase()
+            if (host.isEmpty()) return@filter false
+            host.contains(hostNeedle) ||
+                tab.url.lowercase().contains(needle) ||
+                tab.title.lowercase().contains(needle)
+        }
+        .sortedByDescending { tabs[it].lastAccessedAt }
+}
+
+/** Default search for an address-bar query that should not switch tabs or open a site. */
+fun webSearchUrl(query: String): String {
+    val encoded = java.net.URLEncoder.encode(query.trim(), "UTF-8")
+    return "https://duckduckgo.com/?q=$encoded"
+}
 
 /** Host shown in the address pill when it is not being edited. */
 fun displayHost(url: String): String {

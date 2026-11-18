@@ -15,16 +15,19 @@ val sdsPorterHome = (findProperty("sds.porterHome") as String?) ?: System.getenv
 if (!sdsPorter.isNullOrBlank() && !sdsPorterHome.isNullOrBlank()) {
     tasks.register<Exec>("mirrorDesktop") {
         group = "build"
-        description = "Mirror Android platform calls into the desktop target"
+        description = "Port the Android app into the desktop target"
         workingDir(file(sdsPorterHome))
-        commandLine(sdsPorter, "-m", "sds.cli_v2", "port", "desktop", "--hook", "--path", rootProject.projectDir.absolutePath)
+        commandLine(sdsPorter, "-m", "sds.cli_v2", "port", "desktop", "--path", rootProject.projectDir.absolutePath)
         inputs.files(fileTree(rootProject.projectDir) {
             include("**/src/main/kotlin/**/*.kt")
             include("**/src/androidMain/**/*.kt")
             exclude("**/build/**")
             exclude("**/desktopApp/**")
         })
-        outputs.upToDateWhen { false }
+        inputs.files(fileTree(sdsPorterHome) {
+            include("sds/**/*.py")
+        })
+        outputs.dir(rootProject.file("desktopApp/src/crossGenerated"))
     }
 }
 // </sds-mirror>

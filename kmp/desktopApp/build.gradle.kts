@@ -11,6 +11,10 @@ kotlin {
     }
 }
 
+sourceSets.main {
+    kotlin.srcDir("src/crossGenerated/kotlin")
+}
+
 dependencies {
     implementation(project(":shared"))
     implementation(compose.desktop.currentOs)
@@ -23,6 +27,11 @@ dependencies {
     implementation(fileTree("libs") { include("*.jar") })
     // Android ships org.json in the platform; Android libraries assume it is there.
     implementation("org.json:json:20240303")
+    implementation(libs.ktor.client.okhttp)
+}
+
+tasks.named("compileKotlin") {
+    rootProject.tasks.findByName("mirrorDesktop")?.let { dependsOn(it) }
 }
 
 compose.desktop {

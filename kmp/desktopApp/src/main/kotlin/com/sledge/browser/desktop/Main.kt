@@ -28,11 +28,10 @@ import java.io.File
 fun main() {
     val start = listOf(File("src/main/resources/start.html"), File("start.html")).firstOrNull { it.isFile }
     if (start != null) START_PAGE = start.absoluteFile.toURI().toString()
-    DesktopEngine.prepare(File("kcef-bundle"))
-    // Chromium is a native window, so menus and sheets drawn inside the app window end up behind it.
-    System.setProperty("compose.layers.type", "WINDOW")
+    prepareWiredPlatform()
     application {
         Window(onCloseRequest = {
+            flushDesktopCookies()
             KCEF.disposeBlocking()
             exitApplication()
         }, title = "sledge") {
@@ -53,29 +52,9 @@ fun main() {
             var status by remember { mutableStateOf("Starting the browser engine") }
             LaunchedEffect(Unit) {
                 withContext(Dispatchers.IO) {
-                    val bundle = File("kcef-bundle").absoluteFile
-                    val helper = File(bundle, "jcef_helper").absolutePath
-                    KCEF.init(
-                        builder = {
-                            installDir(bundle)
-                            settings {
-                                browserSubProcessPath = helper
-                                resourcesDirPath = bundle.absolutePath
-                                localesDirPath = File(bundle, "locales").absolutePath
-                                cachePath = File(bundle.parentFile, "kcef-cache").absolutePath
-                                windowlessRenderingEnabled = false
-                            }
-                            addArgs(*DesktopEngine.arguments(bundle, helper))
-                            progress {
-                                onDownloading { status = "Downloading the browser engine" }
-                                onInitialized {
-                                    DesktopEngine.client = KCEF.newClientOrNullBlocking()
-                                    ready = true
-                                }
-                            }
-                        },
-                        onError = { error -> status = error?.message ?: "browser engine failed" },
-                        onRestartRequired = { status = "Restart the desktop app to finish engine setup" },
+                    startWebEngine(
+                        onStatus = { status = it },
+                        onReady = { ready = true },
                     )
                 }
             }

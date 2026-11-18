@@ -54,6 +54,9 @@ class SledgeWebViewClient(
      */
     var onLookalike: ((url: String) -> Boolean)? = null
 
+    /** A request the page started. The third value is true when the request was blocked. */
+    var onResource: ((url: String, type: String, blocked: Boolean) -> Unit)? = null
+
     // ---------------------------------------------------------------------------------
     // OkHttpClient for ModifyHeaders fetches (lazy, one per client instance)
     // ---------------------------------------------------------------------------------
@@ -125,6 +128,7 @@ class SledgeWebViewClient(
             RequestTypeMapper.from(request.url, request.requestHeaders["Accept"])
         }
         if (brave?.shouldBlock(url, sourceUrl, requestType) == true) {
+            reportResource(view, url, requestType, blocked = true)
             return emptyBlockedResponse()
         }
 
@@ -136,14 +140,25 @@ class SledgeWebViewClient(
         )
 
         return when (val result = interceptor.intercept(requestInfo)) {
-            is RequestInterceptor.InterceptResult.Allow -> null
+            is RequestInterceptor.InterceptResult.Allow -> {
+                reportResource(view, url, requestType, blocked = false)
+                null
+            }
 
-            is RequestInterceptor.InterceptResult.Block -> emptyBlockedResponse()
+            is RequestInterceptor.InterceptResult.Block -> {
+                reportResource(view, url, requestType, blocked = true)
+                emptyBlockedResponse()
+            }
 
             is RequestInterceptor.InterceptResult.ModifyHeaders -> {
+                reportResource(view, url, requestType, blocked = false)
                 fetchWithModifiedHeaders(request, result.headers)
             }
         }
+    }
+
+    private fun reportResource(view: WebView, url: String, type: String, blocked: Boolean) {
+        view.post { onResource?.invoke(url, type, blocked) }
     }
 
     private fun emptyBlockedResponse() = WebResourceResponse(

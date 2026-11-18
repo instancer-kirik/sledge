@@ -14,6 +14,13 @@ data class ConsoleLine(
     val line: Int,
 )
 
+/** One request the page made. `type` is document, script, stylesheet, image, and so on. */
+data class NetworkEntry(
+    val url: String,
+    val type: String,
+    val blocked: Boolean,
+)
+
 /** Events the screen listens for. The host reads them when the page fires. */
 class PageHooks {
     var onPageStarted: (String) -> Unit = {}
@@ -24,6 +31,7 @@ class PageHooks {
     var onDownload: (String, String, String, String, Long) -> Unit = { _, _, _, _, _ -> }
     var onCreateTab: (String?) -> BrowserPage? = { null }
     var onConsole: (ConsoleLevel, String, String, Int) -> Unit = { _, _, _, _ -> }
+    var onNetwork: (String, String, Boolean) -> Unit = { _, _, _ -> }
 }
 
 /** What the shared screen can ask a page to do. */
@@ -48,6 +56,12 @@ interface BrowserPage {
 
     /** Runs in the page after it finishes loading. Used for extension content scripts. */
     fun evaluate(script: String) {}
+
+    /** Runs [script] and passes back the string the page returned. */
+    fun evaluate(script: String, onResult: (String?) -> Unit) {
+        evaluate(script)
+        onResult(null)
+    }
 }
 
 /** Filter status the settings panel shows. The engine stays on the target. */
